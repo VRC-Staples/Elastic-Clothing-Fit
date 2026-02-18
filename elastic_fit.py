@@ -42,7 +42,7 @@ from bpy.props import (
 from bpy.types import PropertyGroup, Panel, Operator
 
 # Sidebar tab name — overridden by __init__.py when used as part of a package
-PANEL_CATEGORY = "Elastic Fit"
+PANEL_CATEGORY = ".Staples. Elastic Fit"
 
 EFIT_PREFIX = "EFit_"
 
