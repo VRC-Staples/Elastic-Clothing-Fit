@@ -23,7 +23,7 @@ A Blender add-on that fits clothing meshes onto body meshes using a high-poly pr
 3. Click **Install** and select the downloaded `.zip` file
 4. Enable **Elastic Clothing Fit** in the add-on list
 
-The panel appears in **View3D > Sidebar (N) > Elastic Fit**.
+The panel appears in **View3D > Sidebar (N) > .Staples. Elastic Fit**.
 
 ## Usage
 
