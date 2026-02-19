@@ -55,11 +55,11 @@ To keep parts of the clothing in place (e.g. a waistband):
 
 ### Post-Fit Options
 
-These are configured before fitting and applied when you click **Apply**:
+These options can be set before fitting or adjusted during preview, and are finalized when you click **Apply**:
 
-- **Shape Preservation** — Corrective smooth to maintain the original silhouette (visible live in preview)
-- **Symmetrize** — Mirror one side to the other along a chosen axis (applied on finalize only, not available in preview)
-- **Laplacian Smooth** — Additional smoothing pass to reduce noise (visible live in preview)
+- **Shape Preservation** — Corrective smooth to maintain the original silhouette. Strength and iteration count can be adjusted live during preview.
+- **Laplacian Smooth** — Additional smoothing pass to reduce noise. Can be toggled on/off and tuned live during preview.
+- **Symmetrize** — Mirror one side to the other along a chosen axis. Must be configured before fitting; this option is not available during preview and is applied on finalize only.
 
 ### Offset Fine Tuning
 
