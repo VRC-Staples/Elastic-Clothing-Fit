@@ -188,6 +188,64 @@ def _on_preview_prop_update(self, context):
         _efit_preview_update(context)
 
 
+def _sync_preview_modifiers(cloth, p, has_preserve, preserve_name):
+    """Add, update, or remove the live preview smooth modifiers on the cloth
+    to match current property values.  Called at fit start and from slider
+    update callbacks during preview.
+    """
+    # -- Corrective Smooth --
+    m_cs = cloth.modifiers.get(f"{EFIT_PREFIX}Smooth")
+    if p.smooth_iterations > 0:
+        if m_cs is None:
+            m_cs = cloth.modifiers.new(f"{EFIT_PREFIX}Smooth", 'CORRECTIVE_SMOOTH')
+            m_cs.smooth_type = 'SIMPLE'
+            m_cs.use_only_smooth = False
+            if has_preserve and preserve_name:
+                m_cs.vertex_group = preserve_name
+                m_cs.invert_vertex_group = True
+        m_cs.factor = p.smooth_factor
+        m_cs.iterations = p.smooth_iterations
+    else:
+        if m_cs is not None:
+            cloth.modifiers.remove(m_cs)
+
+    # -- Laplacian Smooth --
+    m_lap = cloth.modifiers.get(f"{EFIT_PREFIX}Laplacian")
+    if p.post_laplacian:
+        if m_lap is None:
+            m_lap = cloth.modifiers.new(f"{EFIT_PREFIX}Laplacian", 'LAPLACIANSMOOTH')
+            m_lap.lambda_border = 0.0
+            m_lap.use_volume_preserve = True
+            m_lap.use_normalized = True
+            if has_preserve and preserve_name:
+                m_lap.vertex_group = preserve_name
+                m_lap.invert_vertex_group = True
+        m_lap.lambda_factor = p.laplacian_factor
+        m_lap.iterations = p.laplacian_iterations
+    else:
+        if m_lap is not None:
+            cloth.modifiers.remove(m_lap)
+
+
+def _on_smooth_mod_update(self, context):
+    """Sync live preview smooth modifiers when their sliders change."""
+    if not _efit_cache:
+        return
+    cloth = bpy.data.objects.get(_efit_cache.get('cloth_name', ''))
+    if cloth is None:
+        return
+    p = context.scene.efit_props
+    _sync_preview_modifiers(
+        cloth, p,
+        _efit_cache.get('has_preserve', False),
+        _efit_cache.get('preserve_name', ''),
+    )
+    if context.screen:
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
 class EFitProperties(PropertyGroup):
 
     body_obj: PointerProperty(
@@ -245,6 +303,7 @@ class EFitProperties(PropertyGroup):
         default=0.75,
         min=0.0,
         max=2.0,
+        update=_on_smooth_mod_update,
     )
     smooth_iterations: IntProperty(
         name="Elastic Iterations",
@@ -252,6 +311,7 @@ class EFitProperties(PropertyGroup):
         default=10,
         min=0,
         max=100,
+        update=_on_smooth_mod_update,
     )
 
     # -- Post-fit options --
@@ -279,6 +339,7 @@ class EFitProperties(PropertyGroup):
         name="Laplacian Smooth",
         description="Apply Laplacian smoothing after fitting to reduce noise while preserving shape",
         default=False,
+        update=_on_smooth_mod_update,
     )
     laplacian_factor: FloatProperty(
         name="Laplacian Factor",
@@ -286,6 +347,7 @@ class EFitProperties(PropertyGroup):
         default=0.25,
         min=0.0,
         max=10.0,
+        update=_on_smooth_mod_update,
     )
     laplacian_iterations: IntProperty(
         name="Laplacian Iterations",
@@ -293,6 +355,7 @@ class EFitProperties(PropertyGroup):
         default=1,
         min=1,
         max=50,
+        update=_on_smooth_mod_update,
     )
 
     # -- Preserve group (optional) --
@@ -794,6 +857,9 @@ class EFIT_OT_fit(Operator):
         cloth.select_set(True)
         context.view_layer.objects.active = cloth
 
+        # Add live preview modifiers so smoothing is visible immediately
+        _sync_preview_modifiers(cloth, p, has_preserve, preserve_name)
+
         self.report({'INFO'},
                     f"Preview ready — adjust sliders, then Apply or Cancel. "
                     f"({actual_tris:,} tri proxy, {subdiv_levels} subdivisions)")
@@ -837,17 +903,10 @@ class EFIT_OT_preview_apply(Operator):
         context.view_layer.objects.active = cloth
 
         # ================================================================
-        #  Corrective Smooth (add and apply)
+        #  Corrective Smooth (apply the live preview modifier if present)
         # ================================================================
-        if p.smooth_iterations > 0:
-            m_cs = cloth.modifiers.new(f"{EFIT_PREFIX}Smooth", 'CORRECTIVE_SMOOTH')
-            m_cs.factor = p.smooth_factor
-            m_cs.iterations = p.smooth_iterations
-            m_cs.smooth_type = 'SIMPLE'
-            m_cs.use_only_smooth = False
-            if has_preserve and preserve_name:
-                m_cs.vertex_group = preserve_name
-                m_cs.invert_vertex_group = True
+        m_cs = cloth.modifiers.get(f"{EFIT_PREFIX}Smooth")
+        if m_cs is not None:
             bpy.ops.object.modifier_apply(modifier=m_cs.name)
 
         # ================================================================
@@ -876,25 +935,16 @@ class EFIT_OT_preview_apply(Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
 
         # ================================================================
-        #  Laplacian Smooth (add and apply)
+        #  Laplacian Smooth (apply the live preview modifier if present)
         # ================================================================
-        if p.post_laplacian:
-            m_lap = cloth.modifiers.new(f"{EFIT_PREFIX}Laplacian", 'LAPLACIANSMOOTH')
-            m_lap.lambda_factor = p.laplacian_factor
-            m_lap.lambda_border = 0.0
-            m_lap.iterations = p.laplacian_iterations
-            m_lap.use_volume_preserve = True
-            m_lap.use_normalized = True
-            if has_preserve and preserve_name:
-                m_lap.vertex_group = preserve_name
-                m_lap.invert_vertex_group = True
+        m_lap = cloth.modifiers.get(f"{EFIT_PREFIX}Laplacian")
+        if m_lap is not None:
             bpy.ops.object.modifier_apply(modifier=m_lap.name)
 
         # Restore UVs if needed
         if saved_uvs:
             _restore_uvs(cloth.data, saved_uvs)
 
-        # Clear cache
         _efit_cache.clear()
 
         bpy.ops.object.select_all(action='DESELECT')
@@ -929,6 +979,12 @@ class EFIT_OT_preview_cancel(Operator):
             self.report({'ERROR'}, "Clothing object no longer exists.")
             return {'CANCELLED'}
         all_originals = c['all_originals']
+
+        # Remove live preview modifiers before restoring vertex positions
+        for mod_name in (f"{EFIT_PREFIX}Smooth", f"{EFIT_PREFIX}Laplacian"):
+            m = cloth.modifiers.get(mod_name)
+            if m is not None:
+                cloth.modifiers.remove(m)
 
         for vi, co in all_originals.items():
             cloth.data.vertices[vi].co = co
@@ -1044,6 +1100,7 @@ class SVRC_PT_elastic_fit(Panel):
 
         # -- Mesh selection --
         box = layout.box()
+        box.enabled = not bool(_efit_cache)
         box.label(text="Select Meshes", icon='MESH_DATA')
         box.prop(p, "body_obj", icon='OUTLINER_OB_MESH')
         box.prop(p, "clothing_obj", icon='MATCLOTH')
@@ -1084,10 +1141,14 @@ class SVRC_PT_elastic_fit(Panel):
         box = layout.box()
         box.label(text="Post-Fit Options", icon='TOOL_SETTINGS')
 
+        in_preview = bool(_efit_cache)
         row = box.row()
+        row.enabled = not in_preview
         row.prop(p, "post_symmetrize")
-        if p.post_symmetrize:
+        if p.post_symmetrize and not in_preview:
             row.prop(p, "symmetrize_axis", text="")
+        elif in_preview:
+            row.label(text="(not available in preview mode)", icon='INFO')
 
         box.prop(p, "post_laplacian")
         if p.post_laplacian:
