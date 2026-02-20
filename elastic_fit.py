@@ -46,10 +46,11 @@ PANEL_CATEGORY = ".Staples. Elastic Fit"
 
 EFIT_PREFIX = "EFit_"
 
-# Module-level cache for live preview.  Populated by the fit operator
-# when entering preview mode, cleared on Apply/Cancel.
+# _efit_cache holds pre-computed displacements/normals/adjacency so slider
+# changes update the viewport without re-running the full shrinkwrap computation.
+# _efit_updating prevents recursive callbacks when vertex positions are written.
 _efit_cache = {}
-_efit_updating = False  # guard against recursive update callbacks
+_efit_updating = False
 
 
 def _mesh_poll(self, obj):
@@ -80,7 +81,8 @@ def _efit_preview_update(context):
         has_preserve = c['has_preserve']
         fit = p.fit_amount
 
-        # Adjust displacements for offset change
+        # Nudge each displacement along the cached body surface normal by the change in
+        # offset since the cache was built — avoids a full shrinkwrap recompute.
         offset_delta = p.offset - c.get('original_offset', p.offset)
         cloth_body_normals = c.get('cloth_body_normals', {})
 
@@ -99,6 +101,10 @@ def _efit_preview_update(context):
         ds_min = p.disp_smooth_min
         ds_max = p.disp_smooth_max
 
+        # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
+        # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
+        # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
+        # between pant legs) while leaving smooth regions untouched.
         for _pass in range(ds_passes):
             gradient = {}
             for vi in fitted_indices:
@@ -151,7 +157,7 @@ def _efit_preview_update(context):
                 weights = offset_group_weights.get(og.group_name)
                 if not weights:
                     continue
-                mult_delta = og.influence / 100.0 - 1.0
+                mult_delta = og.influence / 100.0 - 1.0  # 0% → -1 (no offset), 100% → 0 (neutral), 200% → +1 (double)
                 if abs(mult_delta) < 0.0001:
                     continue
                 for vi, w in weights.items():
@@ -167,6 +173,8 @@ def _efit_preview_update(context):
                 for vi in fitted_indices:
                     current_positions[vi] = cloth.data.vertices[vi].co.copy()
 
+                # Cache the KDTree to avoid rebuilding it on every slider update.
+                # Rest-pose positions are used so neighbor selection is stable as the mesh deforms.
                 kd_follow = c.get('kd_follow')
                 if kd_follow is None:
                     kd_follow = KDTree(len(fitted_indices))
@@ -464,7 +472,7 @@ class EFitProperties(PropertyGroup):
 
     disp_smooth_passes: IntProperty(
         name="Smooth Passes",
-        description="Number of adaptive displacement smoothing iterations (higher = smoother concave areas)",
+        description="Smoothing passes to fix sharp creases in concave areas (e.g. between legs); higher = smoother result",
         default=15,
         min=0,
         max=50,
@@ -472,7 +480,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_threshold: FloatProperty(
         name="Gradient Threshold",
-        description="Multiplier for median gradient — controls what counts as a 'sharp jump' (lower = more aggressive)",
+        description="How sharp a displacement crease must be before aggressive smoothing kicks in — lower catches subtle creases, higher only fixes severe ones",
         default=2.0,
         min=0.5,
         max=10.0,
@@ -480,7 +488,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_min: FloatProperty(
         name="Min Smooth Blend",
-        description="Smoothing blend for low-gradient (smooth) areas",
+        description="Smoothing strength in flat areas — keep low to preserve clothing detail",
         default=0.05,
         min=0.0,
         max=1.0,
@@ -488,7 +496,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_max: FloatProperty(
         name="Max Smooth Blend",
-        description="Smoothing blend for high-gradient (creased) areas",
+        description="Smoothing strength at sharp crease artifacts — higher softens them more aggressively",
         default=0.80,
         min=0.0,
         max=1.0,
@@ -586,6 +594,16 @@ class EFIT_OT_fit(Operator):
     bl_label = "Fit Clothing"
     bl_description = "Fit clothing onto body using a high-poly proxy for smooth deformation"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        p = context.scene.efit_props
+        return (
+            p.clothing_obj is not None
+            and p.body_obj is not None
+            and p.clothing_obj != p.body_obj
+            and not _efit_cache
+        )
 
     def execute(self, context):
         p = context.scene.efit_props
@@ -759,7 +777,9 @@ class EFIT_OT_fit(Operator):
         cloth.select_set(True)
         context.view_layer.objects.active = cloth
 
-        # Build a temporary BVHTree from the pre-shrinkwrap data instead.
+        # BVHTree built from the proxy's PRE-shrinkwrap positions so each cloth vertex
+        # maps to the topologically adjacent proxy face, not a geometrically coincident
+        # but topologically distant one (e.g. the opposite leg).
         from mathutils.bvhtree import BVHTree
 
         proxy_faces = [tuple(f.vertices) for f in proxy.data.polygons]
@@ -780,6 +800,8 @@ class EFIT_OT_fit(Operator):
             face = proxy_polys[face_idx]
             fv = list(face.vertices)
 
+            # Weight each proxy face vertex's displacement by 1/distance to the cloth vertex.
+            # 0.00001 floor avoids division-by-zero if they coincide exactly.
             weights = []
             for fi in fv:
                 d = (v.co - proxy_pre[fi]).length
@@ -792,8 +814,8 @@ class EFIT_OT_fit(Operator):
 
             cloth_displacements[vi] = avg_disp
 
-        # Compute body surface normals at each fitted clothing vertex
-        # (used for live offset adjustment in preview)
+        # Cache the nearest body surface normal per fitted vertex.  Preview uses these
+        # to apply offset-slider changes without re-running shrinkwrap.
         body_faces = [tuple(f.vertices) for f in body.data.polygons]
         body_verts = [v.co.copy() for v in body.data.vertices]
         bvh_body = BVHTree.FromPolygons(body_verts, body_faces)
@@ -826,7 +848,8 @@ class EFIT_OT_fit(Operator):
             if og_weights:
                 offset_group_weights[og.group_name] = og_weights
 
-        # Build clothing mesh adjacency for fitted vertices
+        # Only connect fitted↔fitted edges; preserve-boundary edges are excluded so
+        # adaptive smoothing cannot bleed into the preserved region.
         fitted_set = set(fitted_indices)
         cloth_adj = {vi: [] for vi in fitted_indices}
         for edge in cloth.data.edges:
@@ -845,6 +868,10 @@ class EFIT_OT_fit(Operator):
         ds_min = p.disp_smooth_min
         ds_max = p.disp_smooth_max
 
+        # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
+        # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
+        # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
+        # between pant legs) while leaving smooth regions untouched.
         for _pass in range(ds_passes):
             gradient = {}
             for vi in fitted_indices:
@@ -932,7 +959,7 @@ class EFIT_OT_fit(Operator):
 
                 kd_follow = KDTree(len(fitted_indices))
                 for i, vi in enumerate(fitted_indices):
-                    kd_follow.insert(all_originals[vi], i)
+                    kd_follow.insert(all_originals[vi], i)  # rest-pose coords keep neighbor lookup stable across deformation
                 kd_follow.balance()
 
                 K_follow = min(p.follow_neighbors, len(fitted_indices))
@@ -1125,6 +1152,10 @@ class EFIT_OT_remove(Operator):
     bl_description = "Remove all Elastic Fit modifiers from the clothing"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        return context.scene.efit_props.clothing_obj is not None
+
     def execute(self, context):
         cloth = context.scene.efit_props.clothing_obj
         if not cloth:
@@ -1146,6 +1177,11 @@ class EFIT_OT_clear_blockers(Operator):
     bl_label = "Clear Blockers"
     bl_description = "Remove shape keys and unapplied modifiers from clothing so it can be fitted"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        p = context.scene.efit_props
+        return p.clothing_obj is not None and p.clothing_obj.type == 'MESH'
 
     def execute(self, context):
         cloth = context.scene.efit_props.clothing_obj
