@@ -24,7 +24,7 @@
 bl_info = {
     "name": "Elastic Clothing Fit",
     "author": ".Staples.",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > .Staples. Elastic Fit",
     "description": "Proxy-based clothing fitting with live preview and UV preservation",
@@ -140,6 +140,26 @@ def _efit_preview_update(context):
         for vi in fitted_indices:
             cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
 
+        # Apply per-vertex offset fine-tuning to fitted vertices first,
+        # so the follow step below picks up these adjusted positions.
+        offset_group_weights = c.get('offset_group_weights', {})
+        original_offset = c.get('original_offset', 0.0)
+        if offset_group_weights and original_offset != 0.0:
+            for og in p.offset_groups:
+                if not og.group_name:
+                    continue
+                weights = offset_group_weights.get(og.group_name)
+                if not weights:
+                    continue
+                mult_delta = og.influence / 100.0 - 1.0
+                if abs(mult_delta) < 0.0001:
+                    continue
+                for vi, w in weights.items():
+                    if vi in cloth_body_normals:
+                        cloth.data.vertices[vi].co += (
+                            cloth_body_normals[vi] * (original_offset * mult_delta * w)
+                        )
+
         if has_preserve and preserved_indices and fitted_indices:
             strength = p.follow_strength
             if strength > 0.0:
@@ -170,25 +190,6 @@ def _efit_preview_update(context):
                     if total_weight > 0.0:
                         avg_disp = total_disp / total_weight
                         cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
-
-        # Apply per-vertex offset fine-tuning from offset groups
-        offset_group_weights = c.get('offset_group_weights', {})
-        original_offset = c.get('original_offset', 0.0)
-        if offset_group_weights and original_offset != 0.0:
-            for og in p.offset_groups:
-                if not og.group_name:
-                    continue
-                weights = offset_group_weights.get(og.group_name)
-                if not weights:
-                    continue
-                mult_delta = og.influence / 100.0 - 1.0
-                if abs(mult_delta) < 0.0001:
-                    continue
-                for vi, w in weights.items():
-                    if vi in cloth_body_normals:
-                        cloth.data.vertices[vi].co += (
-                            cloth_body_normals[vi] * (original_offset * mult_delta * w)
-                        )
 
         cloth.data.update()
         if context.screen:
@@ -899,6 +900,26 @@ class EFIT_OT_fit(Operator):
         # ================================================================
         bpy.data.objects.remove(proxy, do_unlink=True)
 
+        # Apply initial offset group fine-tuning to fitted vertices first,
+        # so the follow step below picks up these adjusted positions.
+        if offset_group_weights:
+            base_offset = p.offset
+            for og in p.offset_groups:
+                if not og.group_name:
+                    continue
+                og_weights = offset_group_weights.get(og.group_name)
+                if not og_weights:
+                    continue
+                mult_delta = og.influence / 100.0 - 1.0
+                if abs(mult_delta) < 0.0001:
+                    continue
+                for vi, w in og_weights.items():
+                    if vi in cloth_body_normals:
+                        cloth.data.vertices[vi].co += (
+                            cloth_body_normals[vi] * (base_offset * mult_delta * w)
+                        )
+            cloth.data.update()
+
         # ================================================================
         #  Handle preserved vertices (KDTree follow)
         # ================================================================
@@ -935,25 +956,6 @@ class EFIT_OT_fit(Operator):
                         cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
 
                 cloth.data.update()
-
-        # Apply initial offset group fine-tuning
-        if offset_group_weights:
-            base_offset = p.offset
-            for og in p.offset_groups:
-                if not og.group_name:
-                    continue
-                og_weights = offset_group_weights.get(og.group_name)
-                if not og_weights:
-                    continue
-                mult_delta = og.influence / 100.0 - 1.0
-                if abs(mult_delta) < 0.0001:
-                    continue
-                for vi, w in og_weights.items():
-                    if vi in cloth_body_normals:
-                        cloth.data.vertices[vi].co += (
-                            cloth_body_normals[vi] * (base_offset * mult_delta * w)
-                        )
-            cloth.data.update()
 
         # ================================================================
         #  Populate preview cache — slider changes will re-apply from here

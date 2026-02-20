@@ -4,6 +4,8 @@ A Blender add-on that fits clothing meshes onto body meshes using a high-poly pr
 
 **Compatible with Blender 3.0+** (3.x, 4.x, 5.x)
 
+See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
+
 ## Features
 
 - **Proxy-based fitting** — Subdivides a temporary proxy mesh for smooth shrinkwrap results, then transfers displacements back to the original clothing topology
@@ -53,6 +55,8 @@ To keep parts of the clothing in place (e.g. a waistband):
 2. Select that group in the **Preserve Group** dropdown
 3. Preserved vertices will follow the fitted mesh smoothly based on **Follow Strength**
 
+Preserved vertices are not fitted directly — they follow the displacement of nearby fitted vertices using a weighted KDTree average. This means they also pick up any **Offset Fine Tuning** adjustments applied to those fitted neighbors: if the fitted region around a preserved area is pushed outward by an offset group, the preserved vertices will follow that push naturally. Preserved vertices themselves are never directly affected by offset fine-tuning.
+
 ### Post-Fit Options
 
 These options can be set before fitting or adjusted during preview, and are finalized when you click **Apply**:
@@ -68,13 +72,16 @@ Available under **Advanced Adjustments**, this lets you override the body gap fo
 1. Expand **Advanced Adjustments** and scroll to **Offset Fine Tuning**
 2. Click **Add Group** to add an entry
 3. Select a vertex group from the clothing mesh
-4. Set the **Influence** slider (0–200%):
+4. Set the **Influence** slider (0–1000%):
    - **100%** — No change from the base offset (neutral)
    - **0%** — Those vertices are pulled flush to the body surface
    - **200%** — Those vertices are pushed twice as far as the base offset
+   - Values above 200% push vertices progressively further out, up to 10× the base offset at 1000%
 5. Add as many groups as needed; click **−** on an entry to remove it
 
 Changes to influence sliders update live during preview. Changing which vertex group is selected also updates live and recomputes the per-vertex weights immediately.
+
+**Interaction with Preserve Group:** Offset fine-tuning is applied to fitted vertices before the preserve-follow step runs. This means preserved vertices that are near an offset-tuned region will follow the offset-adjusted positions of their fitted neighbors, keeping the boundary between preserved and fitted areas consistent.
 
 ## Slider Reference
 
@@ -99,7 +106,7 @@ Changes to influence sliders update live during preview. Changing which vertex g
 | Min Smooth Blend | 0.05 | Smoothing blend for low-gradient areas |
 | Max Smooth Blend | 0.80 | Smoothing blend for high-gradient (creased) areas |
 | Follow Neighbors | 8 | Nearest fitted vertices used for preserve follow |
-| Influence (per group) | 100% | Per-vertex-group offset multiplier (0–200%) |
+| Influence (per group) | 100% | Per-vertex-group offset multiplier (0–1000%) |
 
 ## Preview Mode Reference
 
