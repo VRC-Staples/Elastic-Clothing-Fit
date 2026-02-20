@@ -314,7 +314,7 @@ class EFitOffsetGroup(PropertyGroup):
         description="Offset influence for this group: 100 = base offset, 0 = no offset, 200 = double offset",
         default=100,
         min=0,
-        max=200,
+        max=1000,
         subtype='PERCENTAGE',
         update=_on_offset_group_influence_update,
     )
