@@ -24,7 +24,7 @@
 bl_info = {
     "name": "Elastic Clothing Fit",
     "author": ".Staples.",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > .Staples. Elastic Fit",
     "description": "Proxy-based clothing fitting with live preview and UV preservation",
