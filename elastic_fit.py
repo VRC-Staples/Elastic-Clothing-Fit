@@ -1,5 +1,5 @@
 # ============================================================================
-#  Elastic Clothing Fit — Blender Add-on
+#  Elastic Clothing Fit - Blender Add-on
 # ============================================================================
 #
 #  Proxy-based clothing fitting with UV preservation and live preview.
@@ -41,7 +41,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup, Panel, Operator
 
-# Sidebar tab name — overridden by __init__.py when used as part of a package
+# Sidebar tab name (overridden by __init__.py when used as part of a package)
 PANEL_CATEGORY = ".Staples. Elastic Fit"
 
 EFIT_PREFIX = "EFit_"
@@ -54,12 +54,12 @@ _efit_updating = False
 
 
 def _mesh_poll(self, obj):
-    """Filter for PointerProperty eyedropper — only allow mesh objects."""
+    """Only allow mesh objects in the eyedropper picker."""
     return obj.type == 'MESH'
 
 
 def _efit_preview_update(context):
-    """Re-apply displacements from cached data using current slider values."""
+    """Reapply the fit preview using the current slider values."""
     global _efit_updating
     if _efit_updating:
         return
@@ -211,16 +211,13 @@ def _efit_preview_update(context):
 
 
 def _on_preview_prop_update(self, context):
-    """Property update callback — triggers preview recompute."""
+    """Triggered when a slider changes; refreshes the live preview."""
     if _efit_cache:
         _efit_preview_update(context)
 
 
 def _sync_preview_modifiers(cloth, p, has_preserve, preserve_name):
-    """Add, update, or remove the live preview smooth modifiers on the cloth
-    to match current property values.  Called at fit start and from slider
-    update callbacks during preview.
-    """
+    """Sync the smoothing modifiers on the clothing to match current preview settings."""
     # -- Corrective Smooth --
     m_cs = cloth.modifiers.get(f"{EFIT_PREFIX}Smooth")
     if p.smooth_iterations > 0:
@@ -367,7 +364,7 @@ class EFitProperties(PropertyGroup):
 
     proxy_triangles: IntProperty(
         name="Proxy Resolution",
-        description="Target triangle count for the proxy mesh (higher = smoother, slower)",
+        description="Resolution of the internal fitting mesh. Higher = smoother result but slower to compute.",
         default=300000,
         min=10000,
         max=2000000,
@@ -376,7 +373,7 @@ class EFitProperties(PropertyGroup):
 
     preserve_uvs: BoolProperty(
         name="Preserve UVs",
-        description="Restore original UV coordinates after fitting (prevents UV distortion at edges)",
+        description="Keep UVs unchanged after fitting. Recommended for most workflows.",
         default=True,
     )
 
@@ -390,7 +387,7 @@ class EFitProperties(PropertyGroup):
     )
     smooth_iterations: IntProperty(
         name="Elastic Iterations",
-        description="Number of corrective smooth passes",
+        description="How many times shape correction is applied. Higher values preserve more of the original silhouette.",
         default=10,
         min=0,
         max=100,
@@ -420,13 +417,13 @@ class EFitProperties(PropertyGroup):
 
     post_laplacian: BoolProperty(
         name="Laplacian Smooth",
-        description="Apply Laplacian smoothing after fitting to reduce noise while preserving shape",
+        description="Apply an extra smoothing pass after fitting to clean up small surface irregularities.",
         default=False,
         update=_on_smooth_mod_update,
     )
     laplacian_factor: FloatProperty(
         name="Laplacian Factor",
-        description="Strength of Laplacian smoothing",
+        description="How strong the extra smoothing pass is.",
         default=0.25,
         min=0.0,
         max=10.0,
@@ -434,7 +431,7 @@ class EFitProperties(PropertyGroup):
     )
     laplacian_iterations: IntProperty(
         name="Laplacian Iterations",
-        description="Number of Laplacian smooth passes",
+        description="How many extra smoothing passes to apply.",
         default=1,
         min=1,
         max=50,
@@ -445,12 +442,12 @@ class EFitProperties(PropertyGroup):
 
     preserve_group: StringProperty(
         name="Preserve Group",
-        description="Vertex group excluded from fit (follows via displacement transfer)",
+        description="Vertex group that will not be fitted to the body. These vertices will gently follow nearby fitted areas instead.",
         default="",
     )
     follow_strength: FloatProperty(
         name="Follow Strength",
-        description="How closely preserved vertices track the fitted mesh",
+        description="How much the preserved vertices follow the movement of surrounding fitted areas.",
         default=1.0,
         min=0.0,
         max=1.0,
@@ -459,20 +456,20 @@ class EFitProperties(PropertyGroup):
 
     cleanup: BoolProperty(
         name="Replace Previous",
-        description="Remove existing Elastic Fit modifiers before adding new ones",
+        description="Clear any previous fit results before running a new fit.",
         default=True,
     )
 
     # -- Advanced adjustments --
 
     show_advanced: BoolProperty(
-        name="Show Advanced Adjustments",
+        name="Advanced Settings",
         default=False,
     )
 
     disp_smooth_passes: IntProperty(
         name="Smooth Passes",
-        description="Smoothing passes to fix sharp creases in concave areas (e.g. between legs); higher = smoother result",
+        description="Passes to smooth out sharp pinches in tight areas (e.g. between legs). Higher = smoother.",
         default=15,
         min=0,
         max=50,
@@ -480,7 +477,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_threshold: FloatProperty(
         name="Gradient Threshold",
-        description="How sharp a displacement crease must be before aggressive smoothing kicks in — lower catches subtle creases, higher only fixes severe ones",
+        description="How sharp a crease must be before extra smoothing is applied. Lower catches subtle pinches, higher only fixes severe ones.",
         default=2.0,
         min=0.5,
         max=10.0,
@@ -488,7 +485,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_min: FloatProperty(
         name="Min Smooth Blend",
-        description="Smoothing strength in flat areas — keep low to preserve clothing detail",
+        description="Smoothing strength in flat areas. Keep low to preserve clothing surface detail.",
         default=0.05,
         min=0.0,
         max=1.0,
@@ -496,7 +493,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_max: FloatProperty(
         name="Max Smooth Blend",
-        description="Smoothing strength at sharp crease artifacts — higher softens them more aggressively",
+        description="Smoothing strength at sharp crease areas. Higher softens them more.",
         default=0.80,
         min=0.0,
         max=1.0,
@@ -504,7 +501,7 @@ class EFitProperties(PropertyGroup):
     )
     follow_neighbors: IntProperty(
         name="Follow Neighbors",
-        description="Number of nearest fitted vertices used to compute preserved vertex follow",
+        description="How many nearby fitted vertices the preserved group samples when following movement.",
         default=8,
         min=1,
         max=32,
@@ -592,7 +589,7 @@ def _has_blockers(obj):
 class EFIT_OT_fit(Operator):
     bl_idname = "efit.fit"
     bl_label = "Fit Clothing"
-    bl_description = "Fit clothing onto body using a high-poly proxy for smooth deformation"
+    bl_description = "Fit the clothing to the body mesh with a smooth, elastic result"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1011,16 +1008,16 @@ class EFIT_OT_fit(Operator):
         _sync_preview_modifiers(cloth, p, has_preserve, preserve_name)
 
         self.report({'INFO'},
-                    f"Preview ready — adjust sliders, then Apply or Cancel. "
-                    f"({actual_tris:,} tri proxy, {subdiv_levels} subdivisions)")
+                    f"Preview ready. Adjust sliders, then Apply or Cancel. "
+                    f"({actual_tris:,} tris, {subdiv_levels} subdivision levels)")
         return {'FINISHED'}
 
 
 class EFIT_OT_preview_apply(Operator):
-    """Accept the current preview and apply post-processing."""
+    """Accept the current preview and finalize the fit."""
     bl_idname = "efit.preview_apply"
     bl_label = "Apply Fit"
-    bl_description = "Accept the previewed fit and apply post-processing (smooth, symmetrize, etc.)"
+    bl_description = "Accept the current fit and apply any post-processing options"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1106,7 +1103,7 @@ class EFIT_OT_preview_apply(Operator):
 
 
 class EFIT_OT_preview_cancel(Operator):
-    """Cancel the preview and restore original vertex positions."""
+    """Cancel the preview and restore the clothing to its original shape."""
     bl_idname = "efit.preview_cancel"
     bl_label = "Cancel Fit"
     bl_description = "Discard the previewed fit and restore original mesh"
@@ -1141,15 +1138,15 @@ class EFIT_OT_preview_cancel(Operator):
         cloth.data.update()
 
         _efit_cache.clear()
-        self.report({'INFO'}, "Fit cancelled — mesh restored.")
+        self.report({'INFO'}, "Fit cancelled. Clothing restored.")
         return {'FINISHED'}
 
 
 class EFIT_OT_remove(Operator):
-    """Remove all Elastic Fit modifiers and restore the mesh."""
+    """Remove all fit data from the clothing."""
     bl_idname = "efit.remove"
     bl_label = "Remove Fit"
-    bl_description = "Remove all Elastic Fit modifiers from the clothing"
+    bl_description = "Remove all fit data from the clothing and restore it"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1172,10 +1169,10 @@ class EFIT_OT_remove(Operator):
 
 
 class EFIT_OT_clear_blockers(Operator):
-    """Remove all shape keys and unapplied modifiers from the clothing mesh."""
+    """Remove shape keys and unapplied modifiers from the clothing."""
     bl_idname = "efit.clear_blockers"
     bl_label = "Clear Blockers"
-    bl_description = "Remove shape keys and unapplied modifiers from clothing so it can be fitted"
+    bl_description = "Remove shape keys and unapplied modifiers from the clothing so it can be fitted"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1293,7 +1290,7 @@ class SVRC_PT_elastic_fit(Panel):
 
         # -- Mesh selection --
         box = layout.box()
-        box.enabled = not bool(_efit_cache)
+        box.enabled = not in_preview
         box.label(text="Select Meshes", icon='MESH_DATA')
         box.prop(p, "body_obj", icon='OUTLINER_OB_MESH')
         box.prop(p, "clothing_obj", icon='MATCLOTH')
@@ -1316,79 +1313,104 @@ class SVRC_PT_elastic_fit(Panel):
                     )
                 warn_box.operator("efit.clear_blockers", icon='TRASH')
 
-        # -- Fit controls --
-        box = layout.box()
-        box.label(text="Fit Settings", icon='MOD_SHRINKWRAP')
-        box.prop(p, "fit_amount", slider=True)
-        box.prop(p, "offset")
+        # -- Action buttons --
+        layout.separator()
 
-        row = box.row()
-        row.enabled = not in_preview
-        row.prop(p, "proxy_triangles")
         if in_preview:
-            row.label(text="(not available in preview mode)", icon='INFO')
-
-        row = box.row()
-        row.enabled = not in_preview
-        row.prop(p, "preserve_uvs")
-        if in_preview:
-            row.label(text="(not available in preview mode)", icon='INFO')
-
-        # -- Elastic smoothing --
-        box = layout.box()
-        box.label(text="Shape Preservation", icon='MOD_SMOOTH')
-        box.prop(p, "smooth_factor")
-        box.prop(p, "smooth_iterations")
-
-        # -- Post-fit options --
-        box = layout.box()
-        box.label(text="Post-Fit Options", icon='TOOL_SETTINGS')
-
-        row = box.row()
-        row.enabled = not in_preview
-        row.prop(p, "post_symmetrize")
-        if p.post_symmetrize and not in_preview:
-            row.prop(p, "symmetrize_axis", text="")
-        elif in_preview:
-            row.label(text="(not available in preview mode)", icon='INFO')
-
-        box.prop(p, "post_laplacian")
-        if p.post_laplacian:
-            sub = box.column(align=True)
-            sub.prop(p, "laplacian_factor")
-            sub.prop(p, "laplacian_iterations")
-
-        # -- Preserve group --
-        box = layout.box()
-        box.label(text="Preserve Group (Optional)", icon='PINNED')
-        if p.clothing_obj and p.clothing_obj.type == 'MESH':
-            box.prop_search(
-                p, "preserve_group",
-                p.clothing_obj, "vertex_groups",
-                text="Group",
-            )
-            if p.preserve_group:
-                box.prop(p, "follow_strength")
+            box = layout.box()
+            box.label(text="Preview Active", icon='HIDE_OFF')
+            box.label(text="Adjust sliders to see changes live.")
+            row = box.row(align=True)
+            row.scale_y = 1.5
+            row.operator("efit.preview_apply", icon='CHECKMARK', text="Apply")
+            row.operator("efit.preview_cancel", icon='CANCEL', text="Cancel")
         else:
-            box.label(text="Select clothing first", icon='INFO')
+            row = layout.row(align=True)
+            row.scale_y = 1.5
+            row.operator("efit.fit", icon='CHECKMARK')
+            row.operator("efit.remove", icon='X')
 
-        # -- Advanced adjustments --
+        # -- Advanced Settings (collapsed by default) --
+        layout.separator()
         box = layout.box()
         row = box.row()
         row.prop(p, "show_advanced",
                 icon='TRIA_DOWN' if p.show_advanced else 'TRIA_RIGHT',
                 emboss=False)
+
         if p.show_advanced:
-            col = box.column(align=True)
+
+            # Fit Settings
+            sub = box.box()
+            sub.label(text="Fit Settings", icon='MOD_SHRINKWRAP')
+            sub.prop(p, "fit_amount", slider=True)
+            sub.prop(p, "offset")
+
+            row = sub.row()
+            row.enabled = not in_preview
+            row.prop(p, "proxy_triangles")
+            if in_preview:
+                row.label(text="(not available in preview mode)", icon='INFO')
+
+            row = sub.row()
+            row.enabled = not in_preview
+            row.prop(p, "preserve_uvs")
+            if in_preview:
+                row.label(text="(not available in preview mode)", icon='INFO')
+
+            # Shape Preservation
+            sub = box.box()
+            sub.label(text="Shape Preservation", icon='MOD_SMOOTH')
+            sub.prop(p, "smooth_factor")
+            sub.prop(p, "smooth_iterations")
+
+            # Post-Fit Options
+            sub = box.box()
+            sub.label(text="Post-Fit Options", icon='TOOL_SETTINGS')
+
+            row = sub.row()
+            row.enabled = not in_preview
+            row.prop(p, "post_symmetrize")
+            if p.post_symmetrize and not in_preview:
+                row.prop(p, "symmetrize_axis", text="")
+            elif in_preview:
+                row.label(text="(not available in preview mode)", icon='INFO')
+
+            sub.prop(p, "post_laplacian")
+            if p.post_laplacian:
+                col = sub.column(align=True)
+                col.prop(p, "laplacian_factor")
+                col.prop(p, "laplacian_iterations")
+
+            # Preserve Group
+            sub = box.box()
+            sub.label(text="Preserve Group (Optional)", icon='PINNED')
+            if p.clothing_obj and p.clothing_obj.type == 'MESH':
+                sub.prop_search(
+                    p, "preserve_group",
+                    p.clothing_obj, "vertex_groups",
+                    text="Group",
+                )
+                if p.preserve_group:
+                    sub.prop(p, "follow_strength")
+            else:
+                sub.label(text="Select clothing first", icon='INFO')
+
+            # Displacement Smoothing
+            sub = box.box()
+            col = sub.column(align=True)
             col.label(text="Displacement Smoothing:")
             col.prop(p, "disp_smooth_passes")
             col.prop(p, "disp_smooth_threshold")
             col.prop(p, "disp_smooth_min")
             col.prop(p, "disp_smooth_max")
+
+            # Preserve Follow
             col.separator()
             col.label(text="Preserve Follow:")
             col.prop(p, "follow_neighbors")
 
+            # Offset Fine Tuning
             col.separator()
             col.label(text="Offset Fine Tuning:")
             cloth_obj = p.clothing_obj
@@ -1403,26 +1425,10 @@ class SVRC_PT_elastic_fit(Panel):
                 op.index = i
             col.operator("efit.offset_group_add", text="Add Group", icon='ADD')
 
-        # -- Action buttons --
-        layout.separator()
-
-        if _efit_cache:
-            # Preview mode — show Apply / Cancel
-            box = layout.box()
-            box.label(text="Preview Active", icon='HIDE_OFF')
-            box.label(text="Adjust sliders above to see changes live.")
-            row = box.row(align=True)
-            row.scale_y = 1.5
-            row.operator("efit.preview_apply", icon='CHECKMARK', text="Apply")
-            row.operator("efit.preview_cancel", icon='CANCEL', text="Cancel")
-        else:
-            layout.prop(p, "cleanup")
-            row = layout.row(align=True)
-            row.scale_y = 1.5
-            row.operator("efit.fit", icon='CHECKMARK')
-            row.operator("efit.remove", icon='X')
-
-        layout.operator("efit.reset_defaults", icon='LOOP_BACK')
+            # Misc
+            box.separator()
+            box.prop(p, "cleanup")
+            box.operator("efit.reset_defaults", icon='LOOP_BACK')
 
 
 # ============================================================================
