@@ -8,6 +8,13 @@ The **Follow Neighbors** slider under Advanced Settings now goes up to 64 (previ
 
 Follow Neighbors controls how many nearby fitted vertices each preserved vertex samples when calculating where to move. Raising the cap is useful for large preserve groups or coarser clothing meshes where 32 neighbors was not enough to produce a smooth blend at the boundary.
 
+### UX improvements
+
+- All property tooltips have been rewritten in plain language. Descriptions now explain what a setting does and when to change it, rather than describing the underlying algorithm.
+- Buttons now grey out automatically when they cannot run. For example, **Fit Clothing** is disabled while a preview is active, and **Remove Fit** is disabled when no clothing is selected. This replaces error popups with visual feedback.
+- The **Advanced Settings** section was renamed from "Show Advanced Adjustments" for clarity.
+- Status messages in the Info bar are now cleaner and easier to read.
+
 ---
 
 ## v1.0.1
