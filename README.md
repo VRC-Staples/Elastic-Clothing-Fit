@@ -104,7 +104,7 @@ Influence sliders update live during preview. Changing which vertex group is sel
 | Gradient Threshold | 2.0 | How sharp a crease must be before extra smoothing kicks in |
 | Min Smooth Blend | 0.05 | Smoothing strength in flat areas |
 | Max Smooth Blend | 0.80 | Smoothing strength at crease areas |
-| Follow Neighbors | 8 | How many fitted vertices preserved verts sample when following |
+| Follow Neighbors | 8 | How many fitted vertices preserved verts sample when following (max 64) |
 | Influence (per group) | 100% | Per-vertex-group offset multiplier (0-1000%) |
 
 ## Preview Mode Reference
