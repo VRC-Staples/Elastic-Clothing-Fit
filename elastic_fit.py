@@ -504,7 +504,7 @@ class EFitProperties(PropertyGroup):
         description="How many nearby fitted vertices the preserved group samples when following movement.",
         default=8,
         min=1,
-        max=32,
+        max=64,
         update=_on_preview_prop_update,
     )
 
