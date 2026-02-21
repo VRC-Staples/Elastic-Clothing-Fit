@@ -2,7 +2,7 @@
 #  Elastic Clothing Fit - Blender Add-on
 # ============================================================================
 #
-#  Proxy-based clothing fitting with UV preservation and live preview.
+#  Elastic, UV-safe clothing fitting with live preview and per-region offset control.
 #
 #  Copyright (C) 2026 .Staples.
 #
@@ -27,7 +27,7 @@ bl_info = {
     "version": (1, 0, 2),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > .Staples. Elastic Fit",
-    "description": "Proxy-based clothing fitting with live preview and UV preservation",
+    "description": "Elastic, UV-safe clothing fitting with live preview and per-region offset control",
     "category": "3D View",
 }
 

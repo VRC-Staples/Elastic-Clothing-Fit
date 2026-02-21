@@ -8,7 +8,7 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
 ## Features
 
-- **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section so the panel stays clean.
+- **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section.
 - **Live preview.** Adjust sliders and see changes in real-time before committing. Mesh selectors lock during preview to prevent accidental changes.
 - **UV preservation.** Original UVs are saved and restored after fitting so your texture work stays intact.
 - **Preserve Group.** Exclude vertex groups from fitting (e.g. waistbands, collars) with smooth blending at the border.
