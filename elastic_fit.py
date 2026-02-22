@@ -24,7 +24,7 @@
 bl_info = {
     "name": "Elastic Clothing Fit",
     "author": ".Staples.",
-    "version": (1, 0, 2),
+    "version": (1, 0, 3),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > .Staples. Elastic Fit",
     "description": "Elastic, UV-safe clothing fitting with live preview and per-region offset control",
@@ -82,7 +82,7 @@ def _efit_preview_update(context):
         fit = p.fit_amount
 
         # Nudge each displacement along the cached body surface normal by the change in
-        # offset since the cache was built — avoids a full shrinkwrap recompute.
+        # offset since the cache was built, avoiding a full shrinkwrap recompute.
         offset_delta = p.offset - c.get('original_offset', p.offset)
         cloth_body_normals = c.get('cloth_body_normals', {})
 
@@ -146,8 +146,11 @@ def _efit_preview_update(context):
         for vi in fitted_indices:
             cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
 
-        # Apply per-vertex offset fine-tuning to fitted vertices first,
-        # so the follow step below picks up these adjusted positions.
+        # Save each fitted vertex's position before any offset fine-tuning is applied.
+        # The preserve group follow step reads from these saved positions, so offset
+        # adjustments on fitted areas cannot unintentionally move nearby preserved vertices.
+        pre_offset_positions = {vi: cloth.data.vertices[vi].co.copy() for vi in fitted_indices}
+
         offset_group_weights = c.get('offset_group_weights', {})
         original_offset = c.get('original_offset', 0.0)
         if offset_group_weights and original_offset != 0.0:
@@ -169,9 +172,7 @@ def _efit_preview_update(context):
         if has_preserve and preserved_indices and fitted_indices:
             strength = p.follow_strength
             if strength > 0.0:
-                current_positions = {}
-                for vi in fitted_indices:
-                    current_positions[vi] = cloth.data.vertices[vi].co.copy()
+                current_positions = pre_offset_positions
 
                 # Cache the KDTree to avoid rebuilding it on every slider update.
                 # Rest-pose positions are used so neighbor selection is stable as the mesh deforms.
@@ -649,7 +650,7 @@ class EFIT_OT_fit(Operator):
 
         if preserve_name and not cloth.vertex_groups.get(preserve_name):
             self.report({'WARNING'},
-                        f"Preserve group '{preserve_name}' not found — skipping.")
+                        f"Preserve group '{preserve_name}' not found, skipping.")
 
         # Save ALL original vertex positions (used for undo and displacement)
         all_originals = {}
@@ -924,8 +925,11 @@ class EFIT_OT_fit(Operator):
         # ================================================================
         bpy.data.objects.remove(proxy, do_unlink=True)
 
-        # Apply initial offset group fine-tuning to fitted vertices first,
-        # so the follow step below picks up these adjusted positions.
+        # Save each fitted vertex's position before any offset fine-tuning is applied.
+        # The preserve group follow step reads from these saved positions, so offset
+        # adjustments on fitted areas cannot unintentionally move nearby preserved vertices.
+        pre_offset_positions = {vi: cloth.data.vertices[vi].co.copy() for vi in fitted_indices}
+
         if offset_group_weights:
             base_offset = p.offset
             for og in p.offset_groups:
@@ -945,14 +949,12 @@ class EFIT_OT_fit(Operator):
             cloth.data.update()
 
         # ================================================================
-        #  Handle preserved vertices (KDTree follow)
+        #  Move preserved vertices to follow nearby fitted areas
         # ================================================================
         if has_preserve and preserved_indices and fitted_indices:
             strength = p.follow_strength
             if strength > 0.0:
-                current_positions = {}
-                for vi in fitted_indices:
-                    current_positions[vi] = cloth.data.vertices[vi].co.copy()
+                current_positions = pre_offset_positions
 
                 kd_follow = KDTree(len(fitted_indices))
                 for i, vi in enumerate(fitted_indices):
@@ -982,7 +984,7 @@ class EFIT_OT_fit(Operator):
                 cloth.data.update()
 
         # ================================================================
-        #  Populate preview cache — slider changes will re-apply from here
+        #  Populate preview cache (slider changes will re-apply from here)
         # ================================================================
         _efit_cache = {
             'cloth_name': cloth.name,

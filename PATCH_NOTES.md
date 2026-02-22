@@ -1,12 +1,16 @@
 # Patch Notes
 
-## v1.0.2
+## v1.0.3
 
 ### Follow Neighbors limit increased to 64
 
 The **Follow Neighbors** slider under Advanced Settings now goes up to 64 (previously capped at 32).
 
 Follow Neighbors controls how many nearby fitted vertices each preserved vertex samples when calculating where to move. Raising the cap is useful for large preserve groups or coarser clothing meshes where 32 neighbors was not enough to produce a smooth blend at the boundary.
+
+### Preserve Group no longer affected by Offset Fine Tuning
+
+Offset Fine Tuning adjustments now only move the fitted vertices they are assigned to. Previously, nearby preserved vertices would pick up these adjustments indirectly through the follow step, causing the preserve group to shift when it should not. Preserved vertices now always follow the base shrinkwrap displacement only, regardless of any offset fine-tuning applied to nearby fitted regions.
 
 ### UX improvements
 
@@ -27,7 +31,7 @@ Previously, offset fine-tuning was applied to fitted vertices *after* the preser
 
 Now offset fine-tuning is applied to fitted vertices *before* the follow step. When the follow step reads the current positions of nearby fitted vertices to work out how far to pull each preserved vertex, those positions already include the offset contribution. The preserved vertices themselves are never directly pushed by the offset; the adjustment reaches them indirectly through the follow mechanism, the same way the base shrinkwrap displacement does.
 
-**Practical effect:** If you have a waistband in the preserve group and the torso area in an offset fine-tuning group, the waistband will now move correctly with the torso's offset-adjusted position rather than lagging behind it.
+**Note:** This behavior was revised in v1.0.3. Preserved vertices no longer follow offset-adjusted positions, as this caused unintended movement when the preserve group and offset fine-tuning group did not share vertices.
 
 ---
 
