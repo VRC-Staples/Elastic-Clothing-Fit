@@ -1,5 +1,25 @@
 # Patch Notes
 
+## v1.0.4
+
+### Code reorganized into a package
+
+The add-on has been split from a single file into a proper Blender package with one focused module per area of responsibility. This has no effect on how the add-on works, but makes the code much easier to read and maintain.
+
+- `state.py` - shared globals, constants, and utility functions
+- `preview.py` - live preview engine and property update callbacks
+- `properties.py` - all user-facing settings
+- `operators.py` - all operators (fit, apply, cancel, remove, etc.)
+- `ui.py` - the sidebar panel
+
+### Additional UX improvements
+
+- The three repeated "not available in preview mode" labels in Advanced Settings have been replaced with a single note shown once at the top of the section when a preview is active.
+- The **Replace Previous** checkbox and **Reset Defaults** button are now on the same row at the bottom of Advanced Settings, reducing visual clutter.
+- The **Offset Fine Tuning** list now shows column headers ("Vertex Group" and "Influence") when entries are present.
+
+---
+
 ## v1.0.3
 
 ### Follow Neighbors limit increased to 64

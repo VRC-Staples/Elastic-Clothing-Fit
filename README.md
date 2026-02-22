@@ -82,7 +82,7 @@ Available under **Advanced Settings**, this lets you override the body gap for s
 
 Influence sliders update live during preview. Changing which vertex group is selected also updates live and recomputes per-vertex weights immediately.
 
-**Interaction with Preserve Group.** Offset fine-tuning is applied to fitted vertices before the preserve-follow step runs. This means preserved vertices near an offset-tuned region will follow the offset-adjusted positions of their fitted neighbors, keeping the boundary consistent.
+**Interaction with Preserve Group.** Offset fine-tuning only affects the fitted vertices it is assigned to. Preserved vertices always follow the base fit displacement and are never moved by offset fine-tuning, even if the two groups are near each other.
 
 ## Slider Reference
 
