@@ -8,7 +8,7 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
 ## Features
 
-- **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section so the panel stays clean.
+- **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section.
 - **Live preview.** Adjust sliders and see changes in real-time before committing. Mesh selectors lock during preview to prevent accidental changes.
 - **UV preservation.** Original UVs are saved and restored after fitting so your texture work stays intact.
 - **Preserve Group.** Exclude vertex groups from fitting (e.g. waistbands, collars) with smooth blending at the border.
@@ -34,7 +34,7 @@ The panel appears in **View3D > Sidebar (N) > .Staples. Elastic Fit**.
 ### Fitting Clothing
 
 1. Select the **Body** and **Clothing** meshes in the panel
-2. Click **Fit Clothing** — the fit runs and enters **Preview Mode**
+2. Click **Fit Clothing**. The fit runs and enters **Preview Mode**
 3. In Preview Mode, open **Advanced Settings** to adjust sliders and see live updates:
    - **Fit Amount.** How far clothing moves toward the body (0 = none, 1 = full snap)
    - **Offset.** Gap between fitted clothing and body surface
@@ -72,9 +72,9 @@ Available under **Advanced Settings**, this lets you override the body gap for s
 2. Click **Add Group** to add an entry
 3. Select a vertex group from the clothing mesh
 4. Set the **Influence** slider (0-1000%):
-   - **100%** — No change from the base offset (neutral)
-   - **0%** — Those vertices are pulled flush to the body surface
-   - **200%** — Those vertices are pushed twice as far as the base offset
+   - **100%** - No change from the base offset (neutral)
+   - **0%** - Those vertices are pulled flush to the body surface
+   - **200%** - Those vertices are pushed twice as far as the base offset
    - Values above 200% push vertices progressively further out, up to 10x the base offset at 1000%
 5. Add as many groups as needed; click the minus button on an entry to remove it
 
@@ -121,9 +121,9 @@ When a fit is active, the panel enters **Preview Mode**. The following controls 
 | Displacement Smoothing (Advanced Settings) | Yes |
 | Follow Strength / Neighbors | Yes |
 | Offset Fine Tuning groups | Yes |
-| Proxy Resolution | No — re-fit required |
-| Preserve UVs | No — re-fit required |
-| Symmetrize | No — applied on finalize only |
+| Proxy Resolution | No (re-fit required) |
+| Preserve UVs | No (re-fit required) |
+| Symmetrize | No (applied on finalize only) |
 
 ## Requirements
 
