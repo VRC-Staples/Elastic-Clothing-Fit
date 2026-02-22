@@ -31,6 +31,8 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
 The panel appears in **View3D > Sidebar (N) > .Staples. Elastic Fit**.
 
+> **Updating from v1.0.3 or earlier:** v1.0.4 changed the add-on from a single file to a package. Blender cannot upgrade this in place. Before installing v1.0.4 or later, disable and remove the old version in **Edit > Preferences > Add-ons**, then restart Blender before installing the new zip.
+
 ## Usage
 
 ### Fitting Clothing
