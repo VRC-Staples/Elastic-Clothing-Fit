@@ -17,6 +17,7 @@ The add-on has been split from a single file into a proper Blender package with 
 - The three repeated "not available in preview mode" labels in Advanced Settings have been replaced with a single note shown once at the top of the section when a preview is active.
 - The **Replace Previous** checkbox and **Reset Defaults** button are now on the same row at the bottom of Advanced Settings, reducing visual clutter.
 - The **Offset Fine Tuning** list now shows column headers ("Vertex Group" and "Influence") when entries are present.
+- Vertex group dropdowns (**Preserve Group** and **Offset Fine Tuning** group selector) now list groups in reverse creation order, so the most recently added group appears at the top.
 
 ---
 

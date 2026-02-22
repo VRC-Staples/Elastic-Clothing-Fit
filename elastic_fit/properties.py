@@ -19,13 +19,45 @@ from .preview import (
     _on_offset_group_name_update,
 )
 
+# Module-level caches keep the enum item lists alive between Blender redraws.
+# Blender can GC the list returned from an items callback if nothing else holds a reference.
+_preserve_group_items_cache = []
+_group_name_items_cache = []
+
+
+def _preserve_group_items(self, context):
+    # self is an EFitProperties instance; clothing_obj is accessible directly.
+    # Reverses creation order so the most recently added group appears at the top.
+    global _preserve_group_items_cache
+    items = [("", "None", "")]
+    if self.clothing_obj and self.clothing_obj.type == 'MESH':
+        for vg in reversed(self.clothing_obj.vertex_groups):
+            items.append((vg.name, vg.name, ""))
+    _preserve_group_items_cache = items
+    return items
+
+
+def _group_name_items(self, context):
+    # self is an EFitOffsetGroup instance; reach the clothing obj through the scene.
+    # context may be None during undo/redo; guard before accessing it.
+    # Reverses creation order so the most recently added group appears at the top.
+    global _group_name_items_cache
+    items = [("", "None", "")]
+    if context is not None:
+        p = context.scene.efit_props
+        if p.clothing_obj and p.clothing_obj.type == 'MESH':
+            for vg in reversed(p.clothing_obj.vertex_groups):
+                items.append((vg.name, vg.name, ""))
+    _group_name_items_cache = items
+    return items
+
 
 class EFitOffsetGroup(PropertyGroup):
     """One vertex group / influence pair for per-group offset fine-tuning."""
-    group_name: StringProperty(
+    group_name: EnumProperty(
         name="Vertex Group",
         description="Vertex group whose offset influence will be adjusted",
-        default="",
+        items=_group_name_items,
         update=_on_offset_group_name_update,
     )
     influence: IntProperty(
@@ -153,10 +185,10 @@ class EFitProperties(PropertyGroup):
 
     # -- Preserve group (optional) --
 
-    preserve_group: StringProperty(
+    preserve_group: EnumProperty(
         name="Preserve Group",
         description="Vertex group that will not be fitted to the body. These vertices will gently follow nearby fitted areas instead.",
-        default="",
+        items=_preserve_group_items,
     )
     follow_strength: FloatProperty(
         name="Follow Strength",
