@@ -4,6 +4,8 @@ Fit any clothing mesh to any body in a few clicks, with fine-tuning options when
 
 **Compatible with Blender 3.0+** (3.x, 4.x, 5.x)
 
+A **video tutorial** is available on the [Jinxxy product page](https://jinxxy.com/Staples3D/uvtcA).
+
 See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
 ## Features
