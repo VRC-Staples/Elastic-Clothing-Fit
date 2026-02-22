@@ -119,11 +119,7 @@ class SVRC_PT_elastic_fit(Panel):
             sub = box.box()
             sub.label(text="Preserve Group (Optional)", icon='PINNED')
             if p.clothing_obj and p.clothing_obj.type == 'MESH':
-                sub.prop_search(
-                    p, "preserve_group",
-                    p.clothing_obj, "vertex_groups",
-                    text="Group",
-                )
+                sub.prop(p, "preserve_group", text="Group")
                 if p.preserve_group:
                     sub.prop(p, "follow_strength")
             else:
@@ -154,10 +150,7 @@ class SVRC_PT_elastic_fit(Panel):
                 header.label(text="Influence")
             for i, og in enumerate(p.offset_groups):
                 row = col.row(align=True)
-                if cloth_obj and cloth_obj.type == 'MESH':
-                    row.prop_search(og, "group_name", cloth_obj, "vertex_groups", text="")
-                else:
-                    row.prop(og, "group_name", text="")
+                row.prop(og, "group_name", text="")
                 row.prop(og, "influence", text="", slider=True)
                 op       = row.operator("efit.offset_group_remove", text="", icon='REMOVE')
                 op.index = i
