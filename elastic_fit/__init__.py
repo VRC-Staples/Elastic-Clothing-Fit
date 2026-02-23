@@ -22,7 +22,7 @@
 # ============================================================================
 
 bl_info = {
-    "name": "Elastic Clothing Fit",
+    "name": ".Staples. Elastic Clothing Fit",
     "author": ".Staples.",
     "version": (1, 0, 4),
     "blender": (3, 0, 0),
@@ -45,7 +45,7 @@ from .operators import (
     EFIT_OT_offset_group_add,
     EFIT_OT_offset_group_remove,
 )
-from .ui import SVRC_PT_elastic_fit
+from .panels import SVRC_PT_elastic_fit
 
 # Registration order matters: EFitOffsetGroup must be registered before
 # EFitProperties because EFitProperties holds a CollectionProperty of it.

@@ -10,7 +10,7 @@ import mathutils
 import bpy
 
 # Sidebar panel tab name.
-PANEL_CATEGORY = ".Staples. Elastic Fit"
+PANEL_CATEGORY = ".Staples. Elastic Clothing Fit"
 
 # Prefix applied to all modifiers and proxy objects created by this add-on.
 EFIT_PREFIX = "EFit_"

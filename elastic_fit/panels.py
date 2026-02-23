@@ -1,4 +1,4 @@
-# ui.py
+# panels.py
 # Blender panel definition for Elastic Clothing Fit.
 # Draws the sidebar panel including mesh selection, blocker warnings,
 # action buttons, and the collapsible Advanced Settings section.
