@@ -11,6 +11,24 @@ from . import updater
 from .state import _has_blockers, PANEL_CATEGORY
 
 
+def _wrap_text(text, max_chars=40, max_lines=3):
+    """Split text into word-wrapped lines, capped at max_lines."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        if current and len(current) + 1 + len(word) > max_chars:
+            lines.append(current)
+            if len(lines) == max_lines:
+                return lines
+            current = word
+        else:
+            current = (current + " " + word).strip()
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    return lines
+
+
 class SVRC_PT_elastic_fit(Panel):
     bl_label       = "Elastic Clothing Fit"
     bl_idname      = "SVRC_PT_elastic_fit"
@@ -228,8 +246,9 @@ class SVRC_PT_elastic_fit(Panel):
                          text="Restart and Install", icon='LOOP_BACK')
 
         elif s['status'] == 'error':
-            msg = s['error'][:60]
-            upd.label(text=f"Error: {msg}", icon='ERROR')
+            lines = _wrap_text("Error: " + s['error'], max_chars=40, max_lines=3)
+            for i, line in enumerate(lines):
+                upd.label(text=line, icon='ERROR' if i == 0 else 'NONE')
             upd.operator("efit.check_update", text="Try Again", icon='FILE_REFRESH')
 
         # Dev sub-box: visible only when the preference is enabled
