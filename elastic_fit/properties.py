@@ -1,5 +1,6 @@
 # properties.py
 # Blender PropertyGroup definitions for Elastic Clothing Fit.
+# EFitExclusiveGroup is a single vertex group entry used in the EVGF exclusive groups list.
 # EFitOffsetGroup is a single vertex-group/influence pair used in a collection.
 # EFitProperties holds all user-facing settings for the add-on.
 # Update callbacks are imported from preview.py, which must be loaded first.
@@ -52,6 +53,24 @@ def _group_name_items(self, context):
     return items
 
 
+class EFitExclusiveGroup(PropertyGroup):
+    """A single vertex group entry for Exclusive Vertex Group Fit mode."""
+    group_name: EnumProperty(
+        name="Vertex Group",
+        description="Vertex group to fit exclusively to the body",
+        items=_group_name_items,
+    )
+    influence: IntProperty(
+        name="Influence",
+        description="How much this group pushes away from the body. 100 is neutral, 0 pulls flush, 200 doubles the gap.",
+        default=100,
+        min=0,
+        max=1000,
+        subtype='PERCENTAGE',
+        update=_on_offset_group_influence_update,
+    )
+
+
 class EFitOffsetGroup(PropertyGroup):
     """One vertex group / influence pair for per-group offset fine-tuning."""
     group_name: EnumProperty(
@@ -86,12 +105,28 @@ class EFitProperties(PropertyGroup):
         description="Clothing mesh to be fitted",
     )
 
+    fit_mode: EnumProperty(
+        name="Fit Mode",
+        description="Which vertices to fit",
+        items=[
+            ('FULL',      "Full Mesh Fit",             "Fit the entire clothing mesh to the body"),
+            ('EXCLUSIVE', "Exclusive Vertex Group Fit", "Fit only the selected vertex groups, leaving the rest of the mesh untouched"),
+        ],
+        default='FULL',
+    )
+    exclusive_groups: CollectionProperty(
+        name="Exclusive Groups",
+        type=EFitExclusiveGroup,
+        description="Vertex groups to fit in Exclusive Vertex Group Fit mode",
+    )
+
     fit_amount: FloatProperty(
         name="Fit Amount",
         description="How tightly the clothing hugs the body. Lower values keep it loose, higher values pull it flush.",
         default=0.67,
         min=0.0,
         max=1.0,
+        step=1,
         update=_on_preview_prop_update,
     )
 
@@ -226,6 +261,7 @@ class EFitProperties(PropertyGroup):
         default=2.0,
         min=0.5,
         max=10.0,
+        step=1,
         update=_on_preview_prop_update,
     )
     disp_smooth_min: FloatProperty(
@@ -234,6 +270,7 @@ class EFitProperties(PropertyGroup):
         default=0.05,
         min=0.0,
         max=1.0,
+        step=1,
         update=_on_preview_prop_update,
     )
     disp_smooth_max: FloatProperty(
@@ -242,6 +279,7 @@ class EFitProperties(PropertyGroup):
         default=0.80,
         min=0.0,
         max=1.0,
+        step=1,
         update=_on_preview_prop_update,
     )
     follow_neighbors: IntProperty(
@@ -259,4 +297,22 @@ class EFitProperties(PropertyGroup):
         name="Offset Groups",
         type=EFitOffsetGroup,
         description="Per-vertex-group offset influence overrides",
+    )
+
+    # -- Developer / update-testing overrides --
+
+    dev_local_zip: StringProperty(
+        name="Local Zip",
+        description="Local zip file to install instead of the GitHub download in dev testing mode",
+        default="",
+    )
+    dev_override_newer: BoolProperty(
+        name="Force: GitHub is newer",
+        description="Treat GitHub version as newer than current regardless of actual versions",
+        default=False,
+    )
+    dev_override_uptodate: BoolProperty(
+        name="Force: Already up to date",
+        description="Treat current version as up to date regardless of actual versions",
+        default=False,
     )

@@ -7,6 +7,7 @@ import bpy
 from bpy.types import Panel
 
 from . import state
+from . import updater
 from .state import _has_blockers, PANEL_CATEGORY
 
 
@@ -48,6 +49,17 @@ class SVRC_PT_elastic_fit(Panel):
                     )
                 warn_box.operator("efit.clear_blockers", icon='TRASH')
 
+        # -- Fit Mode toggle --
+        # Disabled during preview so mode cannot change while a fit is active.
+        mode_row         = layout.row(align=True)
+        mode_row.enabled = not in_preview
+        mode_row.prop(p, "fit_mode", expand=True)
+        if p.fit_mode == 'EXCLUSIVE':
+            warn       = layout.box()
+            warn.alert = True
+            warn.label(text="Exclusive mode: only selected vertex groups will be fitted.", icon='ERROR')
+            warn.label(text="Fit mode resets to Full Mesh Fit after Apply or Cancel.")
+
         # -- Action buttons --
         layout.separator()
 
@@ -79,10 +91,34 @@ class SVRC_PT_elastic_fit(Panel):
                 note = box.row()
                 note.label(text="Some options are locked during preview.", icon='INFO')
 
+            # Exclusive Groups (shown at top of Advanced Settings in EVGF mode)
+            if p.fit_mode == 'EXCLUSIVE':
+                sub = box.box()
+                sub.label(text="Groups to Fit", icon='GROUP_VERTEX')
+                if p.exclusive_groups:
+                    header          = sub.row(align=True)
+                    header.scale_y  = 0.6
+                    header.label(text="Vertex Group")
+                    header.label(text="Influence")
+                for i, eg in enumerate(p.exclusive_groups):
+                    row = sub.row(align=True)
+                    # Group name and remove button locked during preview; influence stays live.
+                    name_col         = row.column()
+                    name_col.enabled = not in_preview
+                    name_col.prop(eg, "group_name", text="")
+                    row.prop(eg, "influence", text="")
+                    rm_col         = row.column()
+                    rm_col.enabled = not in_preview
+                    op             = rm_col.operator("efit.exclusive_group_remove", text="", icon='REMOVE')
+                    op.index       = i
+                add_row         = sub.row()
+                add_row.enabled = not in_preview
+                add_row.operator("efit.exclusive_group_add", text="Add Group", icon='ADD')
+
             # Fit Settings
             sub = box.box()
             sub.label(text="Fit Settings", icon='MOD_SHRINKWRAP')
-            sub.prop(p, "fit_amount", slider=True)
+            sub.prop(p, "fit_amount")
             sub.prop(p, "offset")
 
             row         = sub.row()
@@ -115,15 +151,16 @@ class SVRC_PT_elastic_fit(Panel):
                 col.prop(p, "laplacian_factor")
                 col.prop(p, "laplacian_iterations")
 
-            # Preserve Group
-            sub = box.box()
-            sub.label(text="Preserve Group (Optional)", icon='PINNED')
-            if p.clothing_obj and p.clothing_obj.type == 'MESH':
-                sub.prop(p, "preserve_group", text="Group")
-                if p.preserve_group:
-                    sub.prop(p, "follow_strength")
-            else:
-                sub.label(text="Select clothing first", icon='INFO')
+            # Preserve Group (hidden in EVGF mode; exclusive groups take its place)
+            if p.fit_mode == 'FULL':
+                sub = box.box()
+                sub.label(text="Preserve Group (Optional)", icon='PINNED')
+                if p.clothing_obj and p.clothing_obj.type == 'MESH':
+                    sub.prop(p, "preserve_group", text="Group")
+                    if p.preserve_group:
+                        sub.prop(p, "follow_strength")
+                else:
+                    sub.label(text="Select clothing first", icon='INFO')
 
             # Displacement Smoothing
             sub = box.box()
@@ -139,25 +176,74 @@ class SVRC_PT_elastic_fit(Panel):
             col.label(text="Preserve Follow:")
             col.prop(p, "follow_neighbors")
 
-            # Offset Fine Tuning
-            col.separator()
-            col.label(text="Offset Fine Tuning:")
-            cloth_obj = p.clothing_obj
-            if p.offset_groups:
-                header          = col.row(align=True)
-                header.scale_y  = 0.6
-                header.label(text="Vertex Group")
-                header.label(text="Influence")
-            for i, og in enumerate(p.offset_groups):
-                row = col.row(align=True)
-                row.prop(og, "group_name", text="")
-                row.prop(og, "influence", text="", slider=True)
-                op       = row.operator("efit.offset_group_remove", text="", icon='REMOVE')
-                op.index = i
-            col.operator("efit.offset_group_add", text="Add Group", icon='ADD')
+            # Offset Fine Tuning (hidden in EVGF mode; exclusive groups carry their own influence)
+            if p.fit_mode == 'FULL':
+                col.separator()
+                col.label(text="Offset Fine Tuning:")
+                if p.offset_groups:
+                    header          = col.row(align=True)
+                    header.scale_y  = 0.6
+                    header.label(text="Vertex Group")
+                    header.label(text="Influence")
+                for i, og in enumerate(p.offset_groups):
+                    row = col.row(align=True)
+                    row.prop(og, "group_name", text="")
+                    row.prop(og, "influence", text="")
+                    op       = row.operator("efit.offset_group_remove", text="", icon='REMOVE')
+                    op.index = i
+                col.operator("efit.offset_group_add", text="Add Group", icon='ADD')
 
             # Misc
             box.separator()
             row = box.row()
             row.prop(p, "cleanup")
             row.operator("efit.reset_defaults", icon='LOOP_BACK')
+
+        # -- Updates --
+        layout.separator()
+        upd = layout.box()
+        s   = updater.get_state()
+
+        if s['status'] == 'checking':
+            upd.label(text="Checking for updates...", icon='SORTTIME')
+
+        elif s['status'] == 'up_to_date':
+            row = upd.row()
+            row.label(text="Up to date.", icon='CHECKMARK')
+            row.operator("efit.check_update", text="", icon='FILE_REFRESH')
+
+        elif s['status'] == 'available':
+            upd.label(text=f"Update available: {s['tag']}", icon='ERROR')
+            upd.operator("efit.download_update",
+                         text=f"Download {s['tag']}", icon='IMPORT')
+            upd.operator("efit.check_update", text="Re-check", icon='FILE_REFRESH')
+
+        elif s['status'] == 'downloading':
+            pct = int(s['progress'] * 100)
+            upd.label(text=f"Downloading... {pct}%", icon='SORTTIME')
+
+        elif s['status'] == 'ready':
+            upd.label(text=f"{s['tag']} downloaded. Blender will restart.", icon='INFO')
+            upd.operator("efit.install_restart",
+                         text="Restart and Install", icon='LOOP_BACK')
+
+        elif s['status'] == 'error':
+            msg = s['error'][:60]
+            upd.label(text=f"Error: {msg}", icon='ERROR')
+            upd.operator("efit.check_update", text="Try Again", icon='FILE_REFRESH')
+
+        # Dev sub-box: visible only when the preference is enabled
+        addon_prefs = context.preferences.addons.get(__package__)
+        dev_mode    = addon_prefs.preferences.dev_update_testing if addon_prefs else False
+
+        if dev_mode:
+            dev_box       = upd.box()
+            dev_box.alert = True
+            dev_box.label(text="Dev mode: install uses local file only", icon='ERROR')
+
+            zip_row = dev_box.row(align=True)
+            zip_row.prop(p, "dev_local_zip", text="Local Zip")
+            zip_row.operator("efit.browse_local_zip", text="", icon='FILE_FOLDER')
+
+            dev_box.prop(p, "dev_override_newer")
+            dev_box.prop(p, "dev_override_uptodate")

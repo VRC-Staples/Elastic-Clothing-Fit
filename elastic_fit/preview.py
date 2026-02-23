@@ -113,8 +113,9 @@ def _efit_preview_update(context):
 
         offset_group_weights = c.get('offset_group_weights', {})
         original_offset = c.get('original_offset', 0.0)
+        source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
         if offset_group_weights and original_offset != 0.0:
-            for og in p.offset_groups:
+            for og in source_groups:
                 if not og.group_name:
                     continue
                 weights = offset_group_weights.get(og.group_name)

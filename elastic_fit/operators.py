@@ -10,10 +10,11 @@ from mathutils.kdtree import KDTree
 from mathutils.bvhtree import BVHTree
 
 import bpy
-from bpy.props import IntProperty
+from bpy.props import IntProperty, StringProperty
 from bpy.types import Operator
 
 from . import state
+from . import updater
 from .state import (
     EFIT_PREFIX,
     _has_blockers, _calc_subdivisions,
@@ -133,7 +134,28 @@ class EFIT_OT_fit(Operator):
         preserved_indices = []
         fitted_indices    = []
 
-        if has_preserve:
+        if p.fit_mode == 'EXCLUSIVE':
+            # In EVGF mode only the union of the listed exclusive groups is fitted.
+            # Everything else is frozen in place; no follow step is needed.
+            fitted_set = set()
+            for eg in p.exclusive_groups:
+                if not eg.group_name:
+                    continue
+                vg = cloth.vertex_groups.get(eg.group_name)
+                if vg is None:
+                    continue
+                for v in cloth.data.vertices:
+                    try:
+                        if vg.weight(v.index) > 0.0:
+                            fitted_set.add(v.index)
+                    except RuntimeError:
+                        pass
+            fitted_indices    = list(fitted_set)
+            preserved_indices = [v.index for v in cloth.data.vertices
+                                 if v.index not in fitted_set]
+            has_preserve  = False
+            preserve_name = ""
+        elif has_preserve:
             preserve_vg = cloth.vertex_groups[preserve_name]
             for vi in range(len(cloth.data.vertices)):
                 try:
@@ -248,9 +270,12 @@ class EFIT_OT_fit(Operator):
             else:
                 cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
 
-        # Precompute per-fitted-vertex weights for all offset fine-tuning groups.
+        # Precompute per-fitted-vertex weights for offset influence groups.
+        # In EVGF mode the exclusive groups carry their own influence sliders;
+        # in Full Mesh Fit mode the offset_groups list is used instead.
         offset_group_weights = {}
-        for og in p.offset_groups:
+        source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
+        for og in source_groups:
             if not og.group_name:
                 continue
             vg = cloth.vertex_groups.get(og.group_name)
@@ -508,6 +533,7 @@ class EFIT_OT_preview_apply(Operator):
             _restore_uvs(cloth.data, saved_uvs)
 
         state._efit_cache.clear()
+        p.fit_mode = 'FULL'
 
         bpy.ops.object.select_all(action='DESELECT')
         cloth.select_set(True)
@@ -553,6 +579,7 @@ class EFIT_OT_preview_cancel(Operator):
         cloth.data.update()
 
         state._efit_cache.clear()
+        context.scene.efit_props.fit_mode = 'FULL'
         self.report({'INFO'}, "Fit cancelled. Clothing restored.")
         return {'FINISHED'}
 
@@ -640,6 +667,7 @@ class EFIT_OT_reset_defaults(Operator):
     def execute(self, context):
         p = context.scene.efit_props
         for prop_name in (
+            'fit_mode',
             'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs',
             'smooth_factor', 'smooth_iterations',
             'post_symmetrize', 'symmetrize_axis',
@@ -683,4 +711,113 @@ class EFIT_OT_offset_group_remove(Operator):
             groups.remove(self.index)
             if state._efit_cache:
                 _efit_preview_update(context)
+        return {'FINISHED'}
+
+
+class EFIT_OT_exclusive_group_add(Operator):
+    """Add a vertex group to the Exclusive Vertex Group Fit list."""
+    bl_idname      = "efit.exclusive_group_add"
+    bl_label       = "Add Exclusive Group"
+    bl_description = "Add a vertex group to fit exclusively"
+    bl_options     = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so the list cannot change mid-fit.
+        return not state._efit_cache
+
+    def execute(self, context):
+        context.scene.efit_props.exclusive_groups.add()
+        return {'FINISHED'}
+
+
+class EFIT_OT_exclusive_group_remove(Operator):
+    """Remove a vertex group entry from the Exclusive Vertex Group Fit list."""
+    bl_idname      = "efit.exclusive_group_remove"
+    bl_label       = "Remove Exclusive Group"
+    bl_description = "Remove this vertex group from the exclusive fit list"
+    bl_options     = {'REGISTER', 'UNDO'}
+
+    index: IntProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return not state._efit_cache
+
+    def execute(self, context):
+        groups = context.scene.efit_props.exclusive_groups
+        if 0 <= self.index < len(groups):
+            groups.remove(self.index)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Update operators
+# ---------------------------------------------------------------------------
+
+class EFIT_OT_check_update(Operator):
+    """Check GitHub for a newer release of Elastic Clothing Fit."""
+    bl_idname      = "efit.check_update"
+    bl_label       = "Check for Updates"
+    bl_description = "Query the GitHub releases API to see if a newer version is available"
+    bl_options     = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        # Grey out during an active preview so a network call cannot start mid-fit.
+        return not state._efit_cache
+
+    def execute(self, context):
+        updater.check_for_update()
+        return {'FINISHED'}
+
+
+class EFIT_OT_download_update(Operator):
+    """Download the latest release zip in the background."""
+    bl_idname      = "efit.download_update"
+    bl_label       = "Download Update"
+    bl_description = "Download the latest release zip file in the background"
+    bl_options     = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return updater.get_state()['status'] == 'available'
+
+    def execute(self, context):
+        updater.download_and_prepare()
+        return {'FINISHED'}
+
+
+class EFIT_OT_install_restart(Operator):
+    """Write the install startup script and relaunch Blender."""
+    bl_idname      = "efit.install_restart"
+    bl_label       = "Restart and Install"
+    bl_description = "Write an auto-install script and relaunch Blender to apply the update"
+    bl_options     = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return updater.get_state()['status'] == 'ready'
+
+    def execute(self, context):
+        updater.install_and_restart()
+        return {'FINISHED'}
+
+
+class EFIT_OT_browse_local_zip(Operator):
+    """Open a file browser to choose a local zip for dev-mode installs."""
+    bl_idname      = "efit.browse_local_zip"
+    bl_label       = "Browse for Zip"
+    bl_description = "Choose a local zip file to use for dev-mode installation testing"
+    bl_options     = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.zip", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        context.scene.efit_props.dev_local_zip = self.filepath
         return {'FINISHED'}
