@@ -90,8 +90,8 @@ Influence sliders update live during preview. Changing which vertex group is sel
 
 | Slider | Default | Description |
 |--------|---------|-------------|
-| Fit Amount | 0.65 | How far clothing moves toward the body |
-| Offset | 0.001 | Gap between clothing and body |
+| Fit Amount | 0.67 | How far clothing moves toward the body |
+| Offset | 0.005 | Gap between clothing and body |
 | Proxy Resolution | 300,000 | Resolution of the internal fitting mesh |
 | Preserve UVs | On | Keep UVs unchanged after fitting |
 | Elastic Strength | 0.75 | Shape correction strength |
