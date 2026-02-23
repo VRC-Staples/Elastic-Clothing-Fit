@@ -2,6 +2,28 @@
 
 ## v1.0.4
 
+### In-panel update checker
+
+The add-on now checks for updates automatically when loaded. A status indicator appears at the bottom of the panel showing whether you are up to date or if a newer version is available. If an update is found, you can download it and install it without leaving Blender. Blender restarts automatically and applies the update on the next launch.
+
+- Update check runs in the background on load, no manual action needed
+- Download progress is shown live in the panel as a percentage
+- Installation is handled by a one-shot startup script that runs on the next Blender launch and removes itself when done
+- A developer testing mode is available under **Edit > Preferences > Add-ons** for testing the update pipeline with a local zip file
+
+### Precision stepping for numeric fields
+
+Arrow increments for the following fields have been reduced to 0.01 for finer control:
+
+- Fit Amount
+- Gradient Threshold
+- Min Smooth Blend
+- Max Smooth Blend
+
+### Sidebar tab renamed
+
+The sidebar tab now reads **.Staples. ECF** instead of the full add-on name.
+
 ### Code reorganized into a package
 
 The add-on has been split from a single file into a proper Blender package with one focused module per area of responsibility. This has no effect on how the add-on works, but makes the code much easier to read and maintain.

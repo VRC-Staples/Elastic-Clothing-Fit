@@ -8,6 +8,19 @@ A **video tutorial** is available on the [Jinxxy product page](https://jinxxy.co
 
 See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
+> [!WARNING]
+> **Upgrading from v1.0.3 or earlier**
+>
+> v1.0.4 changed the add-on from a single file to a package. Blender cannot upgrade this in place and the install will silently fail or break if you skip these steps.
+>
+> **You must:**
+> 1. Open **Edit > Preferences > Add-ons** and disable **Elastic Clothing Fit**
+> 2. Click **Uninstall** to fully uninstall the old version
+> 3. **Restart Blender** before doing anything else
+> 4. Only after restarting, install the new zip normally
+>
+> Skipping the restart between uninstalling and installing will leave stale files in place and the add-on will not work correctly.
+
 ## Features
 
 - **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section.
@@ -21,6 +34,7 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 - **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, and follow parameters under Advanced Settings.
 - **Undo support.** Remove Fit restores the original clothing at any time.
 - **Reset Defaults.** One-click reset of all sliders to default values.
+- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender.
 
 ## Installation
 
@@ -29,9 +43,7 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 3. Click **Install** and select the downloaded `.zip` file
 4. Enable **Elastic Clothing Fit** in the add-on list
 
-The panel appears in **View3D > Sidebar (N) > .Staples. Elastic Fit**.
-
-> **Updating from v1.0.3 or earlier:** v1.0.4 changed the add-on from a single file to a package. Blender cannot upgrade this in place. Before installing v1.0.4 or later, disable and remove the old version in **Edit > Preferences > Add-ons**, then restart Blender before installing the new zip.
+The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
 
 ## Usage
 
