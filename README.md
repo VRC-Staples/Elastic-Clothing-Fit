@@ -174,3 +174,5 @@ When a fit is active, the panel enters **Preview Mode**. The following controls 
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html). See [LICENSE](LICENSE) for details.
+
+See [TERMS.md](TERMS.md) for full terms of use, including the no-warranty disclaimer, redistribution rules, and auto-updater network notice.
