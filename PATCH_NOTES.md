@@ -18,6 +18,7 @@ The add-on has been split from a single file into a proper Blender package with 
 - The **Replace Previous** checkbox and **Reset Defaults** button are now on the same row at the bottom of Advanced Settings, reducing visual clutter.
 - The **Offset Fine Tuning** list now shows column headers ("Vertex Group" and "Influence") when entries are present.
 - Vertex group dropdowns (**Preserve Group** and **Offset Fine Tuning** group selector) now list groups in reverse creation order, so the most recently added group appears at the top.
+- Default values for **Fit Amount** and **Offset** have been adjusted to 0.67 and 0.005 respectively, based on typical use.
 
 ---
 

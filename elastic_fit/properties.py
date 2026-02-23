@@ -89,7 +89,7 @@ class EFitProperties(PropertyGroup):
     fit_amount: FloatProperty(
         name="Fit Amount",
         description="How tightly the clothing hugs the body. Lower values keep it loose, higher values pull it flush.",
-        default=0.65,
+        default=0.67,
         min=0.0,
         max=1.0,
         update=_on_preview_prop_update,
@@ -98,7 +98,7 @@ class EFitProperties(PropertyGroup):
     offset: FloatProperty(
         name="Offset",
         description="Gap between the fitted clothing and the body surface",
-        default=0.001,
+        default=0.005,
         min=0.0,
         max=0.5,
         step=0.01,
