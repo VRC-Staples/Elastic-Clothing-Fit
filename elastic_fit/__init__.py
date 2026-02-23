@@ -32,9 +32,25 @@ bl_info = {
 }
 
 import bpy
-from bpy.props import PointerProperty
+from bpy.props import BoolProperty, PointerProperty
 
-from .properties import EFitOffsetGroup, EFitProperties
+from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProperties
+
+
+class EFIT_AddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    dev_update_testing: BoolProperty(
+        name="Developer Testing",
+        description=(
+            "Enable developer testing overrides for the update system. "
+            "When on, install uses the local zip file instead of the GitHub download."
+        ),
+        default=False,
+    )
+
+    def draw(self, context):
+        self.layout.prop(self, "dev_update_testing")
 from .operators import (
     EFIT_OT_fit,
     EFIT_OT_preview_apply,
@@ -44,12 +60,21 @@ from .operators import (
     EFIT_OT_clear_blockers,
     EFIT_OT_offset_group_add,
     EFIT_OT_offset_group_remove,
+    EFIT_OT_exclusive_group_add,
+    EFIT_OT_exclusive_group_remove,
+    EFIT_OT_check_update,
+    EFIT_OT_download_update,
+    EFIT_OT_install_restart,
+    EFIT_OT_browse_local_zip,
 )
 from .panels import SVRC_PT_elastic_fit
+from . import updater
 
-# Registration order matters: EFitOffsetGroup must be registered before
-# EFitProperties because EFitProperties holds a CollectionProperty of it.
+# Registration order matters: PropertyGroups used as CollectionProperty types
+# must be registered before the PropertyGroup that holds them.
 _classes = (
+    EFIT_AddonPreferences,
+    EFitExclusiveGroup,
     EFitOffsetGroup,
     EFitProperties,
     EFIT_OT_fit,
@@ -60,6 +85,12 @@ _classes = (
     EFIT_OT_clear_blockers,
     EFIT_OT_offset_group_add,
     EFIT_OT_offset_group_remove,
+    EFIT_OT_exclusive_group_add,
+    EFIT_OT_exclusive_group_remove,
+    EFIT_OT_check_update,
+    EFIT_OT_download_update,
+    EFIT_OT_install_restart,
+    EFIT_OT_browse_local_zip,
     SVRC_PT_elastic_fit,
 )
 
@@ -68,6 +99,7 @@ def register():
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.efit_props = PointerProperty(type=EFitProperties)
+    updater.check_for_update()
 
 
 def unregister():
