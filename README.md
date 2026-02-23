@@ -20,6 +20,8 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 > 4. Only after restarting, install the new zip normally
 >
 > Skipping the restart between uninstalling and installing will leave stale files in place and the add-on will not work correctly.
+>
+> This is a one-time issue for this specific upgrade. From v1.0.4 onward, future updates can be applied directly from inside Blender using the built-in update checker at the bottom of the panel.
 
 ## Features
 
