@@ -26,6 +26,7 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 ## Features
 
 - **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section.
+- **Two fit modes.** Full Mesh Fit fits the entire clothing mesh. Exclusive Vertex Group Fit (EVGF) fits only the vertex groups you specify, leaving the rest of the mesh untouched.
 - **Live preview.** Adjust sliders and see changes in real-time before committing. Mesh selectors lock during preview to prevent accidental changes.
 - **UV preservation.** Original UVs are saved and restored after fitting so your texture work stays intact.
 - **Preserve Group.** Exclude vertex groups from fitting (e.g. waistbands, collars) with smooth blending at the border.
@@ -63,6 +64,28 @@ The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
 4. Click **Apply** to finalize (bakes smoothing, runs symmetrize if enabled) or **Cancel** to revert
 
 > **Note:** Proxy Resolution, Preserve UVs, and Symmetrize cannot be changed during Preview Mode. They are greyed out until you cancel and re-fit.
+
+### Fit Mode
+
+The **Fit Mode** dropdown lets you choose how much of the clothing is fitted:
+
+- **Full Mesh Fit** (default) - the entire clothing mesh is fitted to the body. Use the Preserve Group to lock specific areas such as waistbands or collars.
+- **Exclusive Vertex Group Fit (EVGF)** - only the vertex groups you list are fitted. Everything else on the mesh stays exactly where it is, with no follow blending needed.
+
+#### Using Exclusive Vertex Group Fit
+
+EVGF is useful when you want to fit specific panels or regions of a garment without touching the rest of the mesh at all.
+
+1. Set **Fit Mode** to **Exclusive Vertex Group Fit**
+2. Under **Advanced Settings**, click **Add Group** in the **Groups to Fit** list
+3. Select a vertex group from the clothing mesh
+4. Set the **Influence** slider for that group (0-1000%):
+   - **100%** - neutral, uses the base offset
+   - **0%** - pulls those vertices flush to the body
+   - **200%** - doubles the gap from the body
+5. Add as many groups as needed; only vertices in those groups will be moved
+
+Vertices outside the listed groups are completely frozen and are never touched by the fit.
 
 ### Preserve Group
 
