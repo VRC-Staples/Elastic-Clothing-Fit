@@ -21,6 +21,12 @@ EFIT_PREFIX = "EFit_"
 # Empty dict == no active preview.
 _efit_cache = {}
 
+# _efit_originals maps cloth object name -> flat float array of pre-fit vertex
+# positions [x0, y0, z0, x1, ...].  Stored here (in addition to the object's
+# custom property) so Remove Fit works reliably after Apply even when modifier
+# application replaces the mesh data block in the same session.
+_efit_originals = {}
+
 # Guard flag to prevent _efit_preview_update from re-entering itself when it
 # writes vertex positions back to the mesh (which can retrigger update callbacks).
 _efit_updating = False
@@ -83,21 +89,27 @@ def _restore_uvs(mesh, uv_data):
 def _remove_efit(obj):
     """Remove all EFit_ modifiers from obj and restore its original vertex positions.
 
-    Original positions are stored in the obj["_efit_originals"] custom property
-    as a flat float array [x0, y0, z0, x1, y1, z1, ...].
+    Checks the module-level _efit_originals dict first (reliable within the
+    current session), then falls back to the obj["_efit_originals"] custom
+    property (covers .blend files loaded from a previous session).
     """
-    global _efit_cache
+    global _efit_cache, _efit_originals
     _efit_cache.clear()
 
     for m in [m for m in obj.modifiers if m.name.startswith(EFIT_PREFIX)]:
         obj.modifiers.remove(m)
 
-    flat = obj.get("_efit_originals")
+    # Prefer the in-memory store; fall back to the custom property.
+    flat = _efit_originals.pop(obj.name, None)
+    if flat is None:
+        flat = obj.get("_efit_originals")
+    if "_efit_originals" in obj:
+        del obj["_efit_originals"]
+
     if flat is not None:
         verts = obj.data.vertices
         for vi in range(len(verts)):
             idx = vi * 3
             if idx + 2 < len(flat):
                 verts[vi].co = mathutils.Vector((flat[idx], flat[idx + 1], flat[idx + 2]))
-        del obj["_efit_originals"]
         obj.data.update()
