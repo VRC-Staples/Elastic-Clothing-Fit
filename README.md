@@ -35,9 +35,9 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 - **Post-fit options.** Optional shape correction, symmetrize, and extra smoothing applied on finalize.
 - **Offset fine-tuning.** Per-vertex-group offset overrides (0-1000%) for precise local control of the body gap.
 - **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, and follow parameters under Advanced Settings.
-- **Undo support.** Remove Fit restores the original clothing at any time.
+- **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
-- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender.
+- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.
 
 ## Installation
 
