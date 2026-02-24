@@ -7,8 +7,6 @@
 import math
 import mathutils
 
-import bpy
-
 # Sidebar panel tab name.
 PANEL_CATEGORY = ".Staples. ECF"
 
