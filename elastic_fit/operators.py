@@ -10,7 +10,7 @@ from mathutils.kdtree import KDTree
 from mathutils.bvhtree import BVHTree
 
 import bpy
-from bpy.props import BoolProperty, IntProperty, StringProperty
+from bpy.props import IntProperty, StringProperty
 from bpy.types import Operator
 
 from . import state
@@ -407,7 +407,7 @@ class EFIT_OT_fit(Operator):
 
         if offset_group_weights:
             base_offset = p.offset
-            for og in p.offset_groups:
+            for og in source_groups:
                 if not og.group_name:
                     continue
                 og_weights = offset_group_weights.get(og.group_name)
