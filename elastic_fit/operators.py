@@ -133,8 +133,13 @@ class EFIT_OT_fit(Operator):
         bpy.ops.object.select_all(action='DESELECT')
         cloth.select_set(True)
         context.view_layer.objects.active = cloth
-        bpy.ops.object.duplicate(linked=False)
-        proxy      = context.active_object
+        if 'FINISHED' not in bpy.ops.object.duplicate(linked=False):
+            self.report({'ERROR'}, "Could not create proxy mesh.")
+            return {'CANCELLED'}
+        proxy = context.active_object
+        if proxy is cloth:
+            self.report({'ERROR'}, "Could not create proxy mesh.")
+            return {'CANCELLED'}
         proxy.name = f"{EFIT_PREFIX}Proxy"
 
         # Strip all copied modifiers from the proxy (e.g. armature rigs)
