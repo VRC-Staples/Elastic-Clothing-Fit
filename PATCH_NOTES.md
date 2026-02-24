@@ -9,6 +9,7 @@ The add-on now checks for updates automatically when loaded. A status indicator 
 - Update check runs in the background on load, no manual action needed
 - Download progress is shown live in the panel as a percentage
 - Installation is handled by a one-shot startup script that runs on the next Blender launch and removes itself when done
+- When a download is ready, the panel shows options to save the current file before restarting and reopen it automatically after the update installs
 - A developer testing mode is available under **Edit > Preferences > Add-ons** for testing the update pipeline with a local zip file
 
 ### Precision stepping for numeric fields
@@ -33,6 +34,11 @@ The add-on has been split from a single file into a proper Blender package with 
 - `properties.py` - all user-facing settings
 - `operators.py` - all operators (fit, apply, cancel, remove, etc.)
 - `ui.py` - the sidebar panel
+
+### Bug fixes
+
+- **Remove Fit after Apply.** Remove Fit now correctly restores the mesh to its pre-fit state after a fit has been applied. Previously, applying a fit discarded the stored original positions, leaving Remove Fit with nothing to restore.
+- **Exclusive Vertex Group Fit with no groups.** The **Fit Clothing** button now greys out when Exclusive Vertex Group Fit mode is active and no valid groups are configured in the Groups to Fit list. Hovering the button shows a message explaining what to add. Previously the fit would run silently and move no vertices.
 
 ### Additional UX improvements
 
