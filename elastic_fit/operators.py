@@ -10,7 +10,7 @@ from mathutils.kdtree import KDTree
 from mathutils.bvhtree import BVHTree
 
 import bpy
-from bpy.props import IntProperty, StringProperty
+from bpy.props import BoolProperty, IntProperty, StringProperty
 from bpy.types import Operator
 
 from . import state
@@ -32,12 +32,24 @@ class EFIT_OT_fit(Operator):
     @classmethod
     def poll(cls, context):
         p = context.scene.efit_props
-        return (
-            p.clothing_obj is not None
-            and p.body_obj is not None
-            and p.clothing_obj != p.body_obj
-            and not state._efit_cache
-        )
+        if (p.clothing_obj is None
+                or p.body_obj is None
+                or p.clothing_obj == p.body_obj
+                or state._efit_cache):
+            return False
+        if p.fit_mode == 'EXCLUSIVE':
+            cloth = p.clothing_obj
+            has_valid = any(
+                eg.group_name and cloth.vertex_groups.get(eg.group_name)
+                for eg in p.exclusive_groups
+            )
+            if not has_valid:
+                cls.poll_message_set(
+                    "Add at least one vertex group to 'Groups to Fit' "
+                    "(under Advanced Settings) before fitting."
+                )
+                return False
+        return True
 
     def execute(self, context):
         p     = context.scene.efit_props
@@ -66,6 +78,15 @@ class EFIT_OT_fit(Operator):
                         "Use 'Clear Blockers' to remove them first.")
             return {'CANCELLED'}
 
+        if p.fit_mode == 'EXCLUSIVE':
+            valid_groups = [eg for eg in p.exclusive_groups
+                            if eg.group_name and cloth.vertex_groups.get(eg.group_name)]
+            if not valid_groups:
+                self.report({'ERROR'},
+                            "Exclusive Vertex Group Fit requires at least one group in the "
+                            "'Groups to Fit' list. Add a vertex group under Advanced Settings.")
+                return {'CANCELLED'}
+
         if context.active_object and context.active_object.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -73,7 +94,15 @@ class EFIT_OT_fit(Operator):
         state._efit_cache.clear()
 
         if p.cleanup:
-            _remove_efit(cloth)
+            # Remove any leftover EFit_ modifiers and the stale originals without
+            # restoring vertex positions. Position restore is only correct for
+            # Cancel/Remove Fit; starting a new fit should always begin from
+            # whatever positions the mesh is currently in.
+            for m in [m for m in cloth.modifiers if m.name.startswith(EFIT_PREFIX)]:
+                cloth.modifiers.remove(m)
+            if "_efit_originals" in cloth:
+                del cloth["_efit_originals"]
+            state._efit_originals.pop(cloth.name, None)
             for obj in list(bpy.data.objects):
                 if obj.name.startswith(f"{EFIT_PREFIX}Proxy"):
                     bpy.data.objects.remove(obj, do_unlink=True)
@@ -96,6 +125,7 @@ class EFIT_OT_fit(Operator):
             undo_flat[idx + 1] = v.co.y
             undo_flat[idx + 2] = v.co.z
         cloth["_efit_originals"] = undo_flat
+        state._efit_originals[cloth.name] = undo_flat
 
         # ================================================================
         #  Create and subdivide the proxy mesh
@@ -579,6 +609,9 @@ class EFIT_OT_preview_cancel(Operator):
         cloth.data.update()
 
         state._efit_cache.clear()
+        state._efit_originals.pop(cloth.name, None)
+        if "_efit_originals" in cloth:
+            del cloth["_efit_originals"]
         context.scene.efit_props.fit_mode = 'FULL'
         self.report({'INFO'}, "Fit cancelled. Clothing restored.")
         return {'FINISHED'}
@@ -792,7 +825,7 @@ class EFIT_OT_install_restart(Operator):
     """Write the install startup script and relaunch Blender."""
     bl_idname      = "efit.install_restart"
     bl_label       = "Restart and Install"
-    bl_description = "Write an auto-install script and relaunch Blender to apply the update"
+    bl_description = "Save if requested, write an auto-install script, and relaunch Blender"
     bl_options     = {'REGISTER'}
 
     @classmethod
@@ -800,7 +833,11 @@ class EFIT_OT_install_restart(Operator):
         return updater.get_state()['status'] == 'ready'
 
     def execute(self, context):
-        updater.install_and_restart()
+        p = context.scene.efit_props
+        if p.update_save_file and bpy.data.filepath and bpy.data.is_dirty:
+            bpy.ops.wm.save_mainfile()
+        reopen = bpy.data.filepath if (bpy.data.filepath and p.update_reopen_file) else ''
+        updater.install_and_restart(reopen_filepath=reopen)
         return {'FINISHED'}
 
 

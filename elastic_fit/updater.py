@@ -290,11 +290,13 @@ def _download_thread():
 # Install and restart
 # ---------------------------------------------------------------------------
 
-def install_and_restart():
+def install_and_restart(reopen_filepath=''):
     """Write a one-shot startup script and relaunch Blender.
 
     In normal mode the startup script installs the downloaded zip.
     In dev-testing mode it installs the user-specified local zip instead.
+    If reopen_filepath is provided the startup script will reopen that
+    .blend file after the addon is installed.
 
     Called on the main thread from the operator.
     """
@@ -341,6 +343,13 @@ def install_and_restart():
     # Local dev zips are kept so they can be reused across test cycles.
     # GitHub-downloaded zips are always deleted after install.
     delete_zip_line = "" if using_local_zip else "        try: os.remove(zip_path)\n        except: pass\n"
+    reopen_block = (
+        "\n"
+        "def _reopen():\n"
+        f"    bpy.ops.wm.open_mainfile(filepath={repr(reopen_filepath)})\n"
+        "\n"
+        "bpy.app.timers.register(_reopen, first_interval=3.5)\n"
+    ) if reopen_filepath else ""
     script_src = (
         "import bpy, os\n"
         "\n"
@@ -356,6 +365,7 @@ def install_and_restart():
         "    except: pass\n"
         "\n"
         "bpy.app.timers.register(_run, first_interval=2.0)\n"
+        f"{reopen_block}"
     )
 
     with open(script_path, 'w', encoding='utf-8') as fh:

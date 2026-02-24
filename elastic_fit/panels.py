@@ -241,7 +241,17 @@ class SVRC_PT_elastic_fit(Panel):
             upd.label(text=f"Downloading... {pct}%", icon='SORTTIME')
 
         elif s['status'] == 'ready':
-            upd.label(text=f"{s['tag']} downloaded. Blender will restart.", icon='INFO')
+            upd.label(text=f"{s['tag']} downloaded.", icon='INFO')
+            has_filepath = bool(bpy.data.filepath)
+            if has_filepath:
+                if bpy.data.is_dirty:
+                    upd.prop(p, "update_save_file")
+                upd.prop(p, "update_reopen_file")
+            else:
+                warn = upd.box()
+                warn.alert = True
+                warn.label(text="File not saved - save manually", icon='ERROR')
+                warn.label(text="before restarting to keep your work.")
             upd.operator("efit.install_restart",
                          text="Restart and Install", icon='LOOP_BACK')
 

@@ -299,6 +299,17 @@ class EFitProperties(PropertyGroup):
         description="Per-vertex-group offset influence overrides",
     )
 
+    # -- Update restart options (shown inline when a download is ready) --
+
+    update_save_file: BoolProperty(
+        name="Save current file before restarting",
+        default=True,
+    )
+    update_reopen_file: BoolProperty(
+        name="Reopen file after update",
+        default=True,
+    )
+
     # -- Developer / update-testing overrides --
 
     dev_local_zip: StringProperty(
