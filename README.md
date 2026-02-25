@@ -8,6 +8,8 @@ A **video tutorial** is available on the [Jinxxy product page](https://jinxxy.co
 
 See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
+For developer documentation, see the [Wiki](../../wiki).
+
 > [!WARNING]
 > **Upgrading from v1.0.3 or earlier**
 >
