@@ -8,9 +8,25 @@ A **video tutorial** is available on the [Jinxxy product page](https://jinxxy.co
 
 See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
+> [!WARNING]
+> **Upgrading from v1.0.3 or earlier**
+>
+> v1.0.4 changed the add-on from a single file to a package. Blender cannot upgrade this in place and the install will silently fail or break if you skip these steps.
+>
+> **You must:**
+> 1. Open **Edit > Preferences > Add-ons** and disable **Elastic Clothing Fit**
+> 2. Click **Uninstall** to fully uninstall the old version
+> 3. **Restart Blender** before doing anything else
+> 4. Only after restarting, install the new zip normally
+>
+> Skipping the restart between uninstalling and installing will leave stale files in place and the add-on will not work correctly.
+>
+> This is a one-time issue for this specific upgrade. From v1.0.4 onward, future updates can be applied directly from inside Blender using the built-in update checker at the bottom of the panel.
+
 ## Features
 
 - **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section.
+- **Two fit modes.** Full Mesh Fit fits the entire clothing mesh. Exclusive Vertex Group Fit (EVGF) fits only the vertex groups you specify, leaving the rest of the mesh untouched.
 - **Live preview.** Adjust sliders and see changes in real-time before committing. Mesh selectors lock during preview to prevent accidental changes.
 - **UV preservation.** Original UVs are saved and restored after fitting so your texture work stays intact.
 - **Preserve Group.** Exclude vertex groups from fitting (e.g. waistbands, collars) with smooth blending at the border.
@@ -19,8 +35,9 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 - **Post-fit options.** Optional shape correction, symmetrize, and extra smoothing applied on finalize.
 - **Offset fine-tuning.** Per-vertex-group offset overrides (0-1000%) for precise local control of the body gap.
 - **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, and follow parameters under Advanced Settings.
-- **Undo support.** Remove Fit restores the original clothing at any time.
+- **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
+- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.
 
 ## Installation
 
@@ -29,7 +46,7 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 3. Click **Install** and select the downloaded `.zip` file
 4. Enable **Elastic Clothing Fit** in the add-on list
 
-The panel appears in **View3D > Sidebar (N) > .Staples. Elastic Fit**.
+The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
 
 ## Usage
 
@@ -47,6 +64,28 @@ The panel appears in **View3D > Sidebar (N) > .Staples. Elastic Fit**.
 4. Click **Apply** to finalize (bakes smoothing, runs symmetrize if enabled) or **Cancel** to revert
 
 > **Note:** Proxy Resolution, Preserve UVs, and Symmetrize cannot be changed during Preview Mode. They are greyed out until you cancel and re-fit.
+
+### Fit Mode
+
+The **Fit Mode** dropdown lets you choose how much of the clothing is fitted:
+
+- **Full Mesh Fit** (default) - the entire clothing mesh is fitted to the body. Use the Preserve Group to lock specific areas such as waistbands or collars.
+- **Exclusive Vertex Group Fit (EVGF)** - only the vertex groups you list are fitted. Everything else on the mesh stays exactly where it is, with no follow blending needed.
+
+#### Using Exclusive Vertex Group Fit
+
+EVGF is useful when you want to fit specific panels or regions of a garment without touching the rest of the mesh at all.
+
+1. Set **Fit Mode** to **Exclusive Vertex Group Fit**
+2. Under **Advanced Settings**, click **Add Group** in the **Groups to Fit** list
+3. Select a vertex group from the clothing mesh
+4. Set the **Influence** slider for that group (0-1000%):
+   - **100%** - neutral, uses the base offset
+   - **0%** - pulls those vertices flush to the body
+   - **200%** - doubles the gap from the body
+5. Add as many groups as needed; only vertices in those groups will be moved
+
+Vertices outside the listed groups are completely frozen and are never touched by the fit.
 
 ### Preserve Group
 
@@ -82,14 +121,14 @@ Available under **Advanced Settings**, this lets you override the body gap for s
 
 Influence sliders update live during preview. Changing which vertex group is selected also updates live and recomputes per-vertex weights immediately.
 
-**Interaction with Preserve Group.** Offset fine-tuning is applied to fitted vertices before the preserve-follow step runs. This means preserved vertices near an offset-tuned region will follow the offset-adjusted positions of their fitted neighbors, keeping the boundary consistent.
+**Interaction with Preserve Group.** Offset fine-tuning only affects the fitted vertices it is assigned to. Preserved vertices always follow the base fit displacement and are never moved by offset fine-tuning, even if the two groups are near each other.
 
 ## Slider Reference
 
 | Slider | Default | Description |
 |--------|---------|-------------|
-| Fit Amount | 0.65 | How far clothing moves toward the body |
-| Offset | 0.001 | Gap between clothing and body |
+| Fit Amount | 0.67 | How far clothing moves toward the body |
+| Offset | 0.005 | Gap between clothing and body |
 | Proxy Resolution | 300,000 | Resolution of the internal fitting mesh |
 | Preserve UVs | On | Keep UVs unchanged after fitting |
 | Elastic Strength | 0.75 | Shape correction strength |
@@ -135,3 +174,5 @@ When a fit is active, the panel enters **Preview Mode**. The following controls 
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html). See [LICENSE](LICENSE) for details.
+
+See [TERMS.md](TERMS.md) for full terms of use, including the no-warranty disclaimer, redistribution rules, and auto-updater network notice.
