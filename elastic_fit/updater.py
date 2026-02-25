@@ -372,8 +372,15 @@ def install_and_restart(reopen_filepath=''):
         fh.write(script_src)
 
     # Launch a new Blender instance then quit the current one.
+    # On Windows, DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP prevent the child
+    # from being killed when the parent process exits via quit_blender().
     try:
-        subprocess.Popen([bpy.app.binary_path])
+        kwargs = {}
+        if sys.platform == 'win32':
+            kwargs['creationflags'] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        subprocess.Popen([bpy.app.binary_path], **kwargs)
     except Exception as exc:
         _state['status'] = 'error'
         _state['error']  = f'Could not launch Blender: {exc}'
