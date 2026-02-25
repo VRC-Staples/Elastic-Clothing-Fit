@@ -23,6 +23,387 @@ from .state import (
 from .preview import _efit_preview_update, _sync_preview_modifiers
 
 
+# ---------------------------------------------------------------------------
+# Fitting pipeline helpers (called exclusively by EFIT_OT_fit.execute)
+# ---------------------------------------------------------------------------
+
+def _efit_save_originals(cloth):
+    """Snapshot all vertex positions for undo and displacement math.
+
+    Returns (all_originals, undo_flat) where all_originals maps vertex index to
+    Vector and undo_flat is a flat float list suitable for custom property storage.
+    """
+    all_originals = {}
+    undo_flat = [0.0] * (len(cloth.data.vertices) * 3)
+    for v in cloth.data.vertices:
+        all_originals[v.index] = v.co.copy()
+        idx = v.index * 3
+        undo_flat[idx]     = v.co.x
+        undo_flat[idx + 1] = v.co.y
+        undo_flat[idx + 2] = v.co.z
+    return all_originals, undo_flat
+
+
+def _efit_create_proxy(context, cloth, p):
+    """Duplicate the clothing mesh, strip modifiers, and subdivide to the target triangle count.
+
+    Returns (proxy, actual_tris, subdiv_levels) on success, or (None, 0, 0) on failure.
+    """
+    bpy.ops.object.select_all(action='DESELECT')
+    cloth.select_set(True)
+    context.view_layer.objects.active = cloth
+    if 'FINISHED' not in bpy.ops.object.duplicate(linked=False):
+        return None, 0, 0
+    proxy = context.active_object
+    if proxy is cloth:
+        return None, 0, 0
+    proxy.name = f"{EFIT_PREFIX}Proxy"
+
+    # Strip all copied modifiers from the proxy (e.g. armature rigs)
+    # so its evaluated geometry matches its rest-pose mesh exactly.
+    for m in list(proxy.modifiers):
+        proxy.modifiers.remove(m)
+
+    current_tris  = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
+    subdiv_levels = _calc_subdivisions(current_tris, p.proxy_triangles)
+
+    if subdiv_levels > 0:
+        mod_sub = proxy.modifiers.new("_temp_subdiv", 'SUBSURF')
+        mod_sub.levels             = subdiv_levels
+        mod_sub.render_levels      = subdiv_levels
+        mod_sub.subdivision_type   = 'SIMPLE'
+
+        bpy.ops.object.select_all(action='DESELECT')
+        proxy.select_set(True)
+        context.view_layer.objects.active = proxy
+        bpy.ops.object.modifier_apply(modifier=mod_sub.name)
+
+    actual_tris = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
+    return proxy, actual_tris, subdiv_levels
+
+
+def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):
+    """Classify each clothing vertex as fitted or preserved.
+
+    Returns (fitted_indices, preserved_indices, has_preserve, preserve_name).
+    In EXCLUSIVE mode, has_preserve and preserve_name are forced to False/""
+    because the frozen vertices do not participate in the preserve-follow step.
+    """
+    preserved_indices = []
+    fitted_indices    = []
+
+    if p.fit_mode == 'EXCLUSIVE':
+        # In EVGF mode only the union of the listed exclusive groups is fitted.
+        # Everything else is frozen in place; no follow step is needed.
+        fitted_set = set()
+        for eg in p.exclusive_groups:
+            if not eg.group_name:
+                continue
+            vg = cloth.vertex_groups.get(eg.group_name)
+            if vg is None:
+                continue
+            for v in cloth.data.vertices:
+                try:
+                    if vg.weight(v.index) > 0.0:
+                        fitted_set.add(v.index)
+                except RuntimeError:
+                    pass
+        fitted_indices    = list(fitted_set)
+        preserved_indices = [v.index for v in cloth.data.vertices
+                             if v.index not in fitted_set]
+        has_preserve  = False
+        preserve_name = ""
+    elif has_preserve:
+        preserve_vg = cloth.vertex_groups[preserve_name]
+        for vi in range(len(cloth.data.vertices)):
+            try:
+                w = preserve_vg.weight(vi)
+            except RuntimeError:
+                w = 0.0
+            if w > 0.0:
+                preserved_indices.append(vi)
+            else:
+                fitted_indices.append(vi)
+    else:
+        fitted_indices = list(range(len(cloth.data.vertices)))
+
+    return fitted_indices, preserved_indices, has_preserve, preserve_name
+
+
+def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
+                           preserved_indices, has_preserve, p):
+    """Apply shrinkwrap to proxy and zero displacement near the preserve boundary.
+
+    The boundary zeroing step prevents deformation from bleeding into preserved regions
+    via BVH interpolation by nullifying proxy displacement for vertices topologically
+    closer to a preserved clothing vertex than to a fitted one.
+
+    Returns (proxy_pre, proxy_post).
+    """
+    proxy_pre = [v.co.copy() for v in proxy.data.vertices]
+
+    bpy.ops.object.select_all(action='DESELECT')
+    proxy.select_set(True)
+    context.view_layer.objects.active = proxy
+
+    mod_sw              = proxy.modifiers.new(f"{EFIT_PREFIX}Shrinkwrap", 'SHRINKWRAP')
+    mod_sw.target       = body
+    mod_sw.wrap_method  = 'NEAREST_SURFACEPOINT'
+    mod_sw.wrap_mode    = 'OUTSIDE_SURFACE'
+    mod_sw.offset       = p.offset
+
+    bpy.ops.object.modifier_apply(modifier=mod_sw.name)
+    proxy_post = [v.co.copy() for v in proxy.data.vertices]
+
+    # Zero out displacement for proxy vertices that are topologically closer
+    # to a preserved clothing vertex than a fitted one, so deformation does
+    # not bleed into the preserved region via BVH interpolation.
+    if has_preserve and preserved_indices:
+        kd_preserve = KDTree(len(preserved_indices))
+        for i, vi in enumerate(preserved_indices):
+            kd_preserve.insert(all_originals[vi], i)
+        kd_preserve.balance()
+
+        kd_fitted = KDTree(len(fitted_indices))
+        for i, vi in enumerate(fitted_indices):
+            kd_fitted.insert(all_originals[vi], i)
+        kd_fitted.balance()
+
+        for pi in range(len(proxy_pre)):
+            pos = proxy_pre[pi]
+            _, _, d_pres = kd_preserve.find(pos)
+            _, _, d_fit  = kd_fitted.find(pos)
+            if d_pres < d_fit:
+                proxy_post[pi] = proxy_pre[pi].copy()
+
+    return proxy_pre, proxy_post
+
+
+def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
+                                 fitted_indices, source_groups):
+    """Transfer shrinkwrap displacement from the proxy to the clothing via BVH interpolation.
+
+    The BVHTree is built from the proxy's PRE-shrinkwrap positions so each cloth vertex
+    maps to the topologically adjacent proxy face rather than a geometrically coincident
+    but topologically distant one (e.g. the opposite leg in a pants mesh).
+
+    Also caches the nearest body-surface normal per fitted vertex (used by the live preview
+    to apply offset changes without re-running shrinkwrap) and precomputes per-vertex weights
+    for offset influence groups.
+
+    Returns (cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj).
+    """
+    proxy_faces = [tuple(f.vertices) for f in proxy.data.polygons]
+    bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)
+    proxy_polys = proxy.data.polygons
+
+    # Compute per-fitted-vertex displacement via inverse-distance weighted
+    # barycentric interpolation from the three nearest proxy face vertices.
+    cloth_displacements = {}
+    for vi in fitted_indices:
+        v = cloth.data.vertices[vi]
+        loc, normal, face_idx, dist = bvh.find_nearest(v.co)
+
+        if face_idx is None:
+            cloth_displacements[vi] = mathutils.Vector((0.0, 0.0, 0.0))
+            continue
+
+        face = proxy_polys[face_idx]
+        fv   = list(face.vertices)
+
+        # Weight each proxy face vertex's displacement by 1/distance.
+        # 0.00001 floor avoids division-by-zero when positions coincide exactly.
+        weights = [1.0 / max((v.co - proxy_pre[fi]).length, 0.00001) for fi in fv]
+        w_sum   = sum(weights)
+
+        avg_disp = mathutils.Vector((0.0, 0.0, 0.0))
+        for fi, w in zip(fv, weights):
+            avg_disp += (proxy_post[fi] - proxy_pre[fi]) * (w / w_sum)
+
+        cloth_displacements[vi] = avg_disp
+
+    # Cache the nearest body-surface normal per fitted vertex.  The preview
+    # engine uses these to apply offset-slider changes live without re-running
+    # the full shrinkwrap.
+    body_faces   = [tuple(f.vertices) for f in body.data.polygons]
+    body_verts   = [v.co.copy() for v in body.data.vertices]
+    bvh_body     = BVHTree.FromPolygons(body_verts, body_faces)
+
+    cloth_body_normals = {}
+    for vi in fitted_indices:
+        v = cloth.data.vertices[vi]
+        loc, normal, face_idx, dist = bvh_body.find_nearest(v.co)
+        if normal is not None:
+            cloth_body_normals[vi] = normal.normalized()
+        else:
+            cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
+
+    # Precompute per-fitted-vertex weights for offset influence groups.
+    # In EVGF mode the exclusive groups carry their own influence sliders;
+    # in Full Mesh Fit mode the offset_groups list is used instead.
+    offset_group_weights = {}
+    for og in source_groups:
+        if not og.group_name:
+            continue
+        vg = cloth.vertex_groups.get(og.group_name)
+        if vg is None:
+            continue
+        og_weights = {}
+        for vi in fitted_indices:
+            try:
+                w = vg.weight(vi)
+            except RuntimeError:
+                w = 0.0
+            if w > 0.0:
+                og_weights[vi] = w
+        if og_weights:
+            offset_group_weights[og.group_name] = og_weights
+
+    # Build a fitted-only edge adjacency dict.  Edges that cross the
+    # preserve boundary are excluded so adaptive smoothing cannot bleed
+    # displacement into the preserved region.
+    fitted_set = set(fitted_indices)
+    cloth_adj  = {vi: [] for vi in fitted_indices}
+    for edge in cloth.data.edges:
+        a, b = edge.vertices
+        if a in fitted_set and b in fitted_set:
+            cloth_adj[a].append(b)
+            cloth_adj[b].append(a)
+
+    return cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj
+
+
+def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
+                          fitted_indices, fit, p):
+    """Apply adaptive displacement smoothing and write final vertex positions.
+
+    Smooths aggressively where the displacement field has sharp jumps (e.g. the
+    centerline crease between pant legs) and leaves smooth regions nearly untouched.
+    Each pass computes a per-vertex gradient (max displacement diff to edge neighbors);
+    vertices above the median-scaled threshold blend hard toward their neighbor average
+    while those below blend lightly.
+    """
+    smoothed       = {vi: cloth_displacements[vi].copy() for vi in fitted_indices}
+    ds_passes      = p.disp_smooth_passes
+    ds_thresh_mult = p.disp_smooth_threshold
+    ds_min         = p.disp_smooth_min
+    ds_max         = p.disp_smooth_max
+
+    # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
+    # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
+    # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
+    # between pant legs) while leaving smooth regions untouched.
+    for _pass in range(ds_passes):
+        gradient = {}
+        for vi in fitted_indices:
+            neighbors = cloth_adj[vi]
+            if not neighbors:
+                gradient[vi] = 0.0
+                continue
+            d        = smoothed[vi]
+            max_diff = 0.0
+            for ni in neighbors:
+                diff = (d - smoothed[ni]).length
+                if diff > max_diff:
+                    max_diff = diff
+            gradient[vi] = max_diff
+
+        grad_values = sorted(gradient.values())
+        median_grad = grad_values[len(grad_values) // 2] if grad_values else 0.0
+
+        new_smoothed = {}
+        for vi in fitted_indices:
+            neighbors = cloth_adj[vi]
+            if not neighbors:
+                new_smoothed[vi] = smoothed[vi].copy()
+                continue
+            g         = gradient[vi]
+            threshold = max(median_grad * ds_thresh_mult, 0.0001)
+            if g <= threshold:
+                blend = ds_min
+            else:
+                t     = min(1.0, (g - threshold) / max(threshold, 0.0001))
+                blend = ds_min + (ds_max - ds_min) * t
+            avg = mathutils.Vector((0.0, 0.0, 0.0))
+            for ni in neighbors:
+                avg += smoothed[ni]
+            avg /= len(neighbors)
+            new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
+        smoothed = new_smoothed
+
+    for vi in fitted_indices:
+        cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
+
+    cloth.data.update()
+
+
+def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
+                              source_groups, p):
+    """Apply per-group offset influence multipliers along cached body-surface normals.
+
+    A group influence of 100% is neutral (no change); 0% pulls the vertices flush to
+    the body surface; 200% doubles the gap.
+    """
+    base_offset = p.offset
+    for og in source_groups:
+        if not og.group_name:
+            continue
+        og_weights = offset_group_weights.get(og.group_name)
+        if not og_weights:
+            continue
+        # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)
+        mult_delta = og.influence / 100.0 - 1.0
+        if abs(mult_delta) < 0.0001:
+            continue
+        for vi, w in og_weights.items():
+            if vi in cloth_body_normals:
+                cloth.data.vertices[vi].co += (
+                    cloth_body_normals[vi] * (base_offset * mult_delta * w)
+                )
+    cloth.data.update()
+
+
+def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_indices,
+                                pre_offset_positions, p):
+    """Move preserved vertices to gently follow nearby fitted areas.
+
+    Builds a KDTree of fitted vertices in rest-pose space (stable across deformation),
+    then for each preserved vertex computes an inverse-distance-weighted average of
+    the K nearest fitted vertices' displacements and applies it scaled by follow_strength.
+    """
+    strength = p.follow_strength
+    if strength <= 0.0:
+        return
+
+    kd_follow = KDTree(len(fitted_indices))
+    for i, vi in enumerate(fitted_indices):
+        # Rest-pose coords keep neighbor lookup stable across deformation.
+        kd_follow.insert(all_originals[vi], i)
+    kd_follow.balance()
+
+    K_follow = min(p.follow_neighbors, len(fitted_indices))
+
+    for vi in preserved_indices:
+        rest_pos  = all_originals[vi]
+        neighbors = kd_follow.find_n(rest_pos, K_follow)
+
+        total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
+        total_weight = 0.0
+
+        for co, idx, dist in neighbors:
+            ni    = fitted_indices[idx]
+            disp  = pre_offset_positions[ni] - all_originals[ni]
+            w     = 1.0 / max(dist, 0.0001)
+            total_disp   += disp * w
+            total_weight += w
+
+        if total_weight > 0.0:
+            avg_disp = total_disp / total_weight
+            cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
+
+    cloth.data.update()
+
+
 class EFIT_OT_fit(Operator):
     bl_idname = "efit.fit"
     bl_label = "Fit Clothing"
@@ -115,359 +496,61 @@ class EFIT_OT_fit(Operator):
             self.report({'WARNING'},
                         f"Preserve group '{preserve_name}' not found, skipping.")
 
-        # Save all original vertex positions for undo (flat array) and displacement math (dict).
-        all_originals = {}
-        undo_flat = [0.0] * (len(cloth.data.vertices) * 3)
-        for v in cloth.data.vertices:
-            all_originals[v.index] = v.co.copy()
-            idx = v.index * 3
-            undo_flat[idx]     = v.co.x
-            undo_flat[idx + 1] = v.co.y
-            undo_flat[idx + 2] = v.co.z
+        # -- Save originals --
+        all_originals, undo_flat = _efit_save_originals(cloth)
         cloth["_efit_originals"] = undo_flat
         state._efit_originals[cloth.name] = undo_flat
 
-        # ================================================================
-        #  Create and subdivide the proxy mesh
-        # ================================================================
-        bpy.ops.object.select_all(action='DESELECT')
-        cloth.select_set(True)
-        context.view_layer.objects.active = cloth
-        if 'FINISHED' not in bpy.ops.object.duplicate(linked=False):
+        saved_uvs = _save_uvs(cloth.data) if p.preserve_uvs else None
+
+        # -- Create and subdivide the proxy mesh --
+        proxy, actual_tris, subdiv_levels = _efit_create_proxy(context, cloth, p)
+        if proxy is None:
             self.report({'ERROR'}, "Could not create proxy mesh.")
             return {'CANCELLED'}
-        proxy = context.active_object
-        if proxy is cloth:
-            self.report({'ERROR'}, "Could not create proxy mesh.")
-            return {'CANCELLED'}
-        proxy.name = f"{EFIT_PREFIX}Proxy"
 
-        # Strip all copied modifiers from the proxy (e.g. armature rigs)
-        # so its evaluated geometry matches its rest-pose mesh exactly.
-        for m in list(proxy.modifiers):
-            proxy.modifiers.remove(m)
+        # -- Classify preserved vs fitted vertices --
+        fitted_indices, preserved_indices, has_preserve, preserve_name = \
+            _efit_classify_vertices(cloth, p, has_preserve, preserve_name)
 
-        current_tris  = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
-        subdiv_levels = _calc_subdivisions(current_tris, p.proxy_triangles)
+        # -- Shrinkwrap proxy onto body --
+        proxy_pre, proxy_post = _efit_shrinkwrap_proxy(
+            context, proxy, body, all_originals,
+            fitted_indices, preserved_indices, has_preserve, p)
 
-        if subdiv_levels > 0:
-            mod_sub = proxy.modifiers.new("_temp_subdiv", 'SUBSURF')
-            mod_sub.levels             = subdiv_levels
-            mod_sub.render_levels      = subdiv_levels
-            mod_sub.subdivision_type   = 'SIMPLE'
-
-            bpy.ops.object.select_all(action='DESELECT')
-            proxy.select_set(True)
-            context.view_layer.objects.active = proxy
-            bpy.ops.object.modifier_apply(modifier=mod_sub.name)
-
-        actual_tris = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
-
-        # ================================================================
-        #  Classify preserved vs fitted vertices
-        # ================================================================
-        preserved_indices = []
-        fitted_indices    = []
-
-        if p.fit_mode == 'EXCLUSIVE':
-            # In EVGF mode only the union of the listed exclusive groups is fitted.
-            # Everything else is frozen in place; no follow step is needed.
-            fitted_set = set()
-            for eg in p.exclusive_groups:
-                if not eg.group_name:
-                    continue
-                vg = cloth.vertex_groups.get(eg.group_name)
-                if vg is None:
-                    continue
-                for v in cloth.data.vertices:
-                    try:
-                        if vg.weight(v.index) > 0.0:
-                            fitted_set.add(v.index)
-                    except RuntimeError:
-                        pass
-            fitted_indices    = list(fitted_set)
-            preserved_indices = [v.index for v in cloth.data.vertices
-                                 if v.index not in fitted_set]
-            has_preserve  = False
-            preserve_name = ""
-        elif has_preserve:
-            preserve_vg = cloth.vertex_groups[preserve_name]
-            for vi in range(len(cloth.data.vertices)):
-                try:
-                    w = preserve_vg.weight(vi)
-                except RuntimeError:
-                    w = 0.0
-                if w > 0.0:
-                    preserved_indices.append(vi)
-                else:
-                    fitted_indices.append(vi)
-        else:
-            fitted_indices = list(range(len(cloth.data.vertices)))
-
-        # ================================================================
-        #  Shrinkwrap proxy onto body
-        # ================================================================
-        proxy_pre = [v.co.copy() for v in proxy.data.vertices]
-
-        bpy.ops.object.select_all(action='DESELECT')
-        proxy.select_set(True)
-        context.view_layer.objects.active = proxy
-
-        mod_sw              = proxy.modifiers.new(f"{EFIT_PREFIX}Shrinkwrap", 'SHRINKWRAP')
-        mod_sw.target       = body
-        mod_sw.wrap_method  = 'NEAREST_SURFACEPOINT'
-        mod_sw.wrap_mode    = 'OUTSIDE_SURFACE'
-        mod_sw.offset       = p.offset
-
-        bpy.ops.object.modifier_apply(modifier=mod_sw.name)
-        proxy_post = [v.co.copy() for v in proxy.data.vertices]
-
-        # Zero out displacement for proxy vertices that are topologically closer
-        # to a preserved clothing vertex than a fitted one, so deformation does
-        # not bleed into the preserved region via BVH interpolation.
-        if has_preserve and preserved_indices:
-            kd_preserve = KDTree(len(preserved_indices))
-            for i, vi in enumerate(preserved_indices):
-                kd_preserve.insert(all_originals[vi], i)
-            kd_preserve.balance()
-
-            kd_fitted = KDTree(len(fitted_indices))
-            for i, vi in enumerate(fitted_indices):
-                kd_fitted.insert(all_originals[vi], i)
-            kd_fitted.balance()
-
-            for pi in range(len(proxy_pre)):
-                pos = proxy_pre[pi]
-                _, _, d_pres = kd_preserve.find(pos)
-                _, _, d_fit  = kd_fitted.find(pos)
-                if d_pres < d_fit:
-                    proxy_post[pi] = proxy_pre[pi].copy()
-
-        # ================================================================
-        #  Transfer displacement via BVH surface interpolation
-        # ================================================================
-        # BVHTree is built from the proxy's PRE-shrinkwrap positions so each
-        # cloth vertex maps to the topologically adjacent proxy face rather
-        # than a geometrically coincident but topologically distant face
-        # (e.g. the opposite leg in a pants mesh).
-        fit = p.fit_amount
-
-        saved_uvs = None
-        if p.preserve_uvs:
-            saved_uvs = _save_uvs(cloth.data)
-
-        bpy.ops.object.select_all(action='DESELECT')
-        cloth.select_set(True)
-        context.view_layer.objects.active = cloth
-
-        proxy_faces = [tuple(f.vertices) for f in proxy.data.polygons]
-        bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)
-        proxy_polys = proxy.data.polygons
-
-        # Compute per-fitted-vertex displacement via inverse-distance weighted
-        # barycentric interpolation from the three nearest proxy face vertices.
-        cloth_displacements = {}
-        for vi in fitted_indices:
-            v = cloth.data.vertices[vi]
-            loc, normal, face_idx, dist = bvh.find_nearest(v.co)
-
-            if face_idx is None:
-                cloth_displacements[vi] = mathutils.Vector((0.0, 0.0, 0.0))
-                continue
-
-            face = proxy_polys[face_idx]
-            fv   = list(face.vertices)
-
-            # Weight each proxy face vertex's displacement by 1/distance.
-            # 0.00001 floor avoids division-by-zero when positions coincide exactly.
-            weights = [1.0 / max((v.co - proxy_pre[fi]).length, 0.00001) for fi in fv]
-            w_sum   = sum(weights)
-
-            avg_disp = mathutils.Vector((0.0, 0.0, 0.0))
-            for fi, w in zip(fv, weights):
-                avg_disp += (proxy_post[fi] - proxy_pre[fi]) * (w / w_sum)
-
-            cloth_displacements[vi] = avg_disp
-
-        # Cache the nearest body-surface normal per fitted vertex.  The preview
-        # engine uses these to apply offset-slider changes live without re-running
-        # the full shrinkwrap.
-        body_faces   = [tuple(f.vertices) for f in body.data.polygons]
-        body_verts   = [v.co.copy() for v in body.data.vertices]
-        bvh_body     = BVHTree.FromPolygons(body_verts, body_faces)
-
-        cloth_body_normals = {}
-        for vi in fitted_indices:
-            v = cloth.data.vertices[vi]
-            loc, normal, face_idx, dist = bvh_body.find_nearest(v.co)
-            if normal is not None:
-                cloth_body_normals[vi] = normal.normalized()
-            else:
-                cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
-
-        # Precompute per-fitted-vertex weights for offset influence groups.
-        # In EVGF mode the exclusive groups carry their own influence sliders;
-        # in Full Mesh Fit mode the offset_groups list is used instead.
-        offset_group_weights = {}
+        # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        for og in source_groups:
-            if not og.group_name:
-                continue
-            vg = cloth.vertex_groups.get(og.group_name)
-            if vg is None:
-                continue
-            og_weights = {}
-            for vi in fitted_indices:
-                try:
-                    w = vg.weight(vi)
-                except RuntimeError:
-                    w = 0.0
-                if w > 0.0:
-                    og_weights[vi] = w
-            if og_weights:
-                offset_group_weights[og.group_name] = og_weights
+        cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj = \
+            _efit_transfer_displacements(
+                cloth, proxy, proxy_pre, proxy_post, body, fitted_indices, source_groups)
 
-        # Build a fitted-only edge adjacency dict.  Edges that cross the
-        # preserve boundary are excluded so adaptive smoothing cannot bleed
-        # displacement into the preserved region.
-        fitted_set = set(fitted_indices)
-        cloth_adj  = {vi: [] for vi in fitted_indices}
-        for edge in cloth.data.edges:
-            a, b = edge.vertices
-            if a in fitted_set and b in fitted_set:
-                cloth_adj[a].append(b)
-                cloth_adj[b].append(a)
+        bpy.data.objects.remove(proxy, do_unlink=True)
 
-        # ================================================================
-        #  Adaptive displacement smoothing
-        # ================================================================
-        # Smooth aggressively where the displacement field has sharp jumps
-        # (the centerline crease in concave areas) and leave smooth areas alone.
-        smoothed       = {vi: cloth_displacements[vi].copy() for vi in fitted_indices}
-        ds_passes      = p.disp_smooth_passes
-        ds_thresh_mult = p.disp_smooth_threshold
-        ds_min         = p.disp_smooth_min
-        ds_max         = p.disp_smooth_max
-
-        # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
-        # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
-        # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
-        # between pant legs) while leaving smooth regions untouched.
-        for _pass in range(ds_passes):
-            gradient = {}
-            for vi in fitted_indices:
-                neighbors = cloth_adj[vi]
-                if not neighbors:
-                    gradient[vi] = 0.0
-                    continue
-                d        = smoothed[vi]
-                max_diff = 0.0
-                for ni in neighbors:
-                    diff = (d - smoothed[ni]).length
-                    if diff > max_diff:
-                        max_diff = diff
-                gradient[vi] = max_diff
-
-            grad_values = sorted(gradient.values())
-            median_grad = grad_values[len(grad_values) // 2] if grad_values else 0.0
-
-            new_smoothed = {}
-            for vi in fitted_indices:
-                neighbors = cloth_adj[vi]
-                if not neighbors:
-                    new_smoothed[vi] = smoothed[vi].copy()
-                    continue
-                g         = gradient[vi]
-                threshold = max(median_grad * ds_thresh_mult, 0.0001)
-                if g <= threshold:
-                    blend = ds_min
-                else:
-                    t     = min(1.0, (g - threshold) / max(threshold, 0.0001))
-                    blend = ds_min + (ds_max - ds_min) * t
-                avg = mathutils.Vector((0.0, 0.0, 0.0))
-                for ni in neighbors:
-                    avg += smoothed[ni]
-                avg /= len(neighbors)
-                new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
-            smoothed = new_smoothed
-
-        # Apply smoothed displacements
-        for vi in fitted_indices:
-            cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
-
-        cloth.data.update()
+        # -- Adaptive displacement smoothing --
+        _efit_apply_smoothing(
+            cloth, all_originals, cloth_displacements,
+            cloth_adj, fitted_indices, p.fit_amount, p)
 
         if saved_uvs:
             _restore_uvs(cloth.data, saved_uvs)
-
-        # ================================================================
-        #  Delete the proxy mesh
-        # ================================================================
-        bpy.data.objects.remove(proxy, do_unlink=True)
 
         # Save each fitted vertex's position before any offset fine-tuning is applied.
         # The preserve group follow step reads from these saved positions, so offset
         # adjustments on fitted areas cannot unintentionally move nearby preserved vertices.
         pre_offset_positions = {vi: cloth.data.vertices[vi].co.copy() for vi in fitted_indices}
 
+        # -- Offset fine-tuning --
         if offset_group_weights:
-            base_offset = p.offset
-            for og in source_groups:
-                if not og.group_name:
-                    continue
-                og_weights = offset_group_weights.get(og.group_name)
-                if not og_weights:
-                    continue
-                # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)
-                mult_delta = og.influence / 100.0 - 1.0
-                if abs(mult_delta) < 0.0001:
-                    continue
-                for vi, w in og_weights.items():
-                    if vi in cloth_body_normals:
-                        cloth.data.vertices[vi].co += (
-                            cloth_body_normals[vi] * (base_offset * mult_delta * w)
-                        )
-            cloth.data.update()
+            _efit_apply_offset_tuning(
+                cloth, cloth_body_normals, offset_group_weights, source_groups, p)
 
-        # ================================================================
-        #  Move preserved vertices to follow nearby fitted areas
-        # ================================================================
+        # -- Move preserved vertices to follow nearby fitted areas --
         if has_preserve and preserved_indices and fitted_indices:
-            strength = p.follow_strength
-            if strength > 0.0:
-                current_positions = pre_offset_positions
+            _efit_apply_preserve_follow(
+                cloth, all_originals, fitted_indices,
+                preserved_indices, pre_offset_positions, p)
 
-                kd_follow = KDTree(len(fitted_indices))
-                for i, vi in enumerate(fitted_indices):
-                    # Rest-pose coords keep neighbor lookup stable across deformation.
-                    kd_follow.insert(all_originals[vi], i)
-                kd_follow.balance()
-
-                K_follow = min(p.follow_neighbors, len(fitted_indices))
-
-                for vi in preserved_indices:
-                    rest_pos  = all_originals[vi]
-                    neighbors = kd_follow.find_n(rest_pos, K_follow)
-
-                    total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
-                    total_weight = 0.0
-
-                    for co, idx, dist in neighbors:
-                        ni    = fitted_indices[idx]
-                        disp  = current_positions[ni] - all_originals[ni]
-                        w     = 1.0 / max(dist, 0.0001)
-                        total_disp   += disp * w
-                        total_weight += w
-
-                    if total_weight > 0.0:
-                        avg_disp = total_disp / total_weight
-                        cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
-
-                cloth.data.update()
-
-        # ================================================================
-        #  Populate preview cache (slider changes will re-apply from here)
-        # ================================================================
+        # -- Populate preview cache (slider changes will re-apply from here) --
         state._efit_cache = {
             'cloth_name':          cloth.name,
             'all_originals':       all_originals,
@@ -483,7 +566,7 @@ class EFIT_OT_fit(Operator):
             'offset_group_weights': offset_group_weights,
         }
 
-        # Reselect clothing
+        # Reselect clothing.
         bpy.ops.object.select_all(action='DESELECT')
         cloth.select_set(True)
         context.view_layer.objects.active = cloth
