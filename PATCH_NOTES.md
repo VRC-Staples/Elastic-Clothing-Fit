@@ -50,6 +50,7 @@ The add-on has been split from a single file into a proper Blender package with 
 - **Remove Fit after Apply.** Remove Fit now correctly restores the mesh to its pre-fit state after a fit has been applied. Previously, applying a fit discarded the stored original positions, leaving Remove Fit with nothing to restore.
 - **Exclusive Vertex Group Fit with no groups.** The **Fit Clothing** button now greys out when Exclusive Vertex Group Fit mode is active and no valid groups are configured in the Groups to Fit list. Hovering the button shows a message explaining what to add. Previously the fit would run silently and move no vertices.
 - **Exclusive Vertex Group Fit influence not applied on first fit.** Group influence sliders in Exclusive Vertex Group Fit mode now take effect immediately when fitting. Previously the adjustments were only applied after moving a slider to trigger a preview refresh; fitting and applying without touching any slider produced a result with all influence values treated as 100%.
+- **Auto-update restart on Windows.** The new Blender instance spawned during an update now correctly survives the current process exiting on Windows. Previously, the child process could be terminated when the parent quit because it inherited the parent job object. Process detachment flags are now applied on Windows so the new instance starts independently. No change on macOS or Linux.
 
 ### Additional UX improvements
 
