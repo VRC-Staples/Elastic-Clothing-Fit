@@ -18,6 +18,7 @@ from .preview import (
     _on_smooth_mod_update,
     _on_offset_group_influence_update,
     _on_offset_group_name_update,
+    _on_tab_change,
 )
 
 # Module-level caches keep the enum item lists alive between Blender redraws.
@@ -91,6 +92,53 @@ class EFitOffsetGroup(PropertyGroup):
 
 
 class EFitProperties(PropertyGroup):
+
+    # -- Tab and section collapse state --
+
+    ui_tab: EnumProperty(
+        name="Tab",
+        description="Switch between fitting modes and the updater",
+        items=[
+            ('FULL',      "Full Mesh Fit", "Fit the entire clothing mesh to the body"),
+            ('EXCLUSIVE', "Exclusive Fit", "Fit only selected vertex groups"),
+            ('UPDATE',    "Update",        "Check for and install updates"),
+        ],
+        default='FULL',
+        update=_on_tab_change,
+    )
+
+    show_fit_settings: BoolProperty(
+        name="Fit Settings",
+        default=True,
+    )
+    show_shape_preservation: BoolProperty(
+        name="Shape Preservation",
+        default=False,
+    )
+    show_preserve_group: BoolProperty(
+        name="Preserve Group",
+        default=False,
+    )
+    show_proximity_falloff: BoolProperty(
+        name="Proximity Falloff",
+        default=False,
+    )
+    show_displacement_smoothing: BoolProperty(
+        name="Displacement Smoothing",
+        default=False,
+    )
+    show_offset_fine_tuning: BoolProperty(
+        name="Offset Fine Tuning",
+        default=False,
+    )
+    show_post_fit: BoolProperty(
+        name="Post-Fit Options",
+        default=False,
+    )
+    show_misc: BoolProperty(
+        name="Misc",
+        default=False,
+    )
 
     body_obj: PointerProperty(
         name="Body",
@@ -288,6 +336,58 @@ class EFitProperties(PropertyGroup):
         default=8,
         min=1,
         max=64,
+        update=_on_preview_prop_update,
+    )
+
+    # -- Proximity falloff --
+
+    use_proximity_falloff: BoolProperty(
+        name="Proximity Falloff",
+        description="Reduce fit pull for vertices farther from the body, preserving volume in loose areas like puffy sleeves or skirts",
+        default=False,
+        update=_on_preview_prop_update,
+    )
+    proximity_mode: EnumProperty(
+        name="Mode",
+        description="When to measure cloth-to-body distances for the falloff",
+        items=[
+            ('PRE_FIT',         "Pre-Fit",         "Measure distances from original clothing positions"),
+            ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Measure distances after the shrinkwrap proxy is applied"),
+        ],
+        default='PRE_FIT',
+    )
+    proximity_start: FloatProperty(
+        name="Start Distance",
+        description="Clothing vertices closer than this to the body receive full fit pull (weight 1.0)",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        step=0.1,
+        precision=4,
+        subtype='DISTANCE',
+        update=_on_preview_prop_update,
+    )
+    proximity_end: FloatProperty(
+        name="End Distance",
+        description="Clothing vertices farther than this from the body receive no fit pull (weight 0.0)",
+        default=0.05,
+        min=0.001,
+        max=1.0,
+        step=0.1,
+        precision=4,
+        subtype='DISTANCE',
+        update=_on_preview_prop_update,
+    )
+    proximity_curve: EnumProperty(
+        name="Curve",
+        description="Shape of the falloff curve between Start and End distances",
+        items=[
+            ('LINEAR', "Linear", "Straight linear falloff"),
+            ('SMOOTH', "Smooth", "Smooth S-curve falloff (recommended)"),
+            ('SHARP',  "Sharp",  "Quick drop-off close to the body"),
+            ('ROOT',   "Root",   "Gradual drop-off, stays full longer"),
+        ],
+        default='SMOOTH',
         update=_on_preview_prop_update,
     )
 

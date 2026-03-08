@@ -103,8 +103,19 @@ def _efit_preview_update(context):
                 new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
             smoothed = new_smoothed
 
+        # Recompute proximity weights from cached distances so slider changes update live.
+        proximity_weights = None
+        if p.use_proximity_falloff:
+            cloth_body_distances = c.get('cloth_body_distances', {})
+            if cloth_body_distances:
+                proximity_weights = state._compute_proximity_weights(
+                    cloth_body_distances, fitted_indices,
+                    p.proximity_start, p.proximity_end, p.proximity_curve)
+        c['proximity_weights'] = proximity_weights
+
         for vi in fitted_indices:
-            cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
+            pw = proximity_weights[vi] if proximity_weights else 1.0
+            cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit * pw
 
         # Save each fitted vertex's position before any offset fine-tuning is applied.
         # The preserve group follow step reads from these saved positions, so offset
@@ -170,6 +181,20 @@ def _efit_preview_update(context):
                     area.tag_redraw()
     except Exception:
         pass
+    finally:
+        state._efit_updating = False
+
+
+def _on_tab_change(self, context):
+    """Sync fit_mode when the user switches UI tabs."""
+    if state._efit_updating:
+        return
+    state._efit_updating = True
+    try:
+        if self.ui_tab == 'FULL':
+            self.fit_mode = 'FULL'
+        elif self.ui_tab == 'EXCLUSIVE':
+            self.fit_mode = 'EXCLUSIVE'
     finally:
         state._efit_updating = False
 
