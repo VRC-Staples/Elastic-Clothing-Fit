@@ -230,6 +230,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     bvh_body     = BVHTree.FromPolygons(body_verts, body_faces)
 
     cloth_body_normals = {}
+    cloth_body_distances = {}
     for vi in fitted_indices:
         v = cloth.data.vertices[vi]
         loc, normal, face_idx, dist = bvh_body.find_nearest(v.co)
@@ -237,6 +238,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             cloth_body_normals[vi] = normal.normalized()
         else:
             cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
+        cloth_body_distances[vi] = dist if dist is not None else 0.0
 
     # Precompute per-fitted-vertex weights for offset influence groups.
     # In EVGF mode the exclusive groups carry their own influence sliders;
@@ -270,11 +272,11 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             cloth_adj[a].append(b)
             cloth_adj[b].append(a)
 
-    return cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj
+    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj
 
 
 def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
-                          fitted_indices, fit, p):
+                          fitted_indices, fit, p, proximity_weights=None):
     """Apply adaptive displacement smoothing and write final vertex positions.
 
     Smooths aggressively where the displacement field has sharp jumps (e.g. the
@@ -332,7 +334,8 @@ def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
         smoothed = new_smoothed
 
     for vi in fitted_indices:
-        cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
+        pw = proximity_weights[vi] if proximity_weights else 1.0
+        cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit * pw
 
     cloth.data.update()
 
@@ -520,16 +523,24 @@ class EFIT_OT_fit(Operator):
 
         # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj = \
+        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj = \
             _efit_transfer_displacements(
                 cloth, proxy, proxy_pre, proxy_post, body, fitted_indices, source_groups)
 
         bpy.data.objects.remove(proxy, do_unlink=True)
 
+        # -- Proximity falloff weights (between steps 5 and 6) --
+        proximity_weights = None
+        if p.use_proximity_falloff:
+            proximity_weights = state._compute_proximity_weights(
+                cloth_body_distances, fitted_indices,
+                p.proximity_start, p.proximity_end, p.proximity_curve)
+
         # -- Adaptive displacement smoothing --
         _efit_apply_smoothing(
             cloth, all_originals, cloth_displacements,
-            cloth_adj, fitted_indices, p.fit_amount, p)
+            cloth_adj, fitted_indices, p.fit_amount, p,
+            proximity_weights=proximity_weights)
 
         if saved_uvs:
             _restore_uvs(cloth.data, saved_uvs)
@@ -552,17 +563,19 @@ class EFIT_OT_fit(Operator):
 
         # -- Populate preview cache (slider changes will re-apply from here) --
         state._efit_cache = {
-            'cloth_name':          cloth.name,
-            'all_originals':       all_originals,
-            'cloth_displacements': cloth_displacements,
-            'cloth_adj':           cloth_adj,
-            'fitted_indices':      fitted_indices,
-            'preserved_indices':   preserved_indices,
-            'has_preserve':        has_preserve,
-            'preserve_name':       preserve_name,
-            'saved_uvs':           saved_uvs,
-            'cloth_body_normals':  cloth_body_normals,
-            'original_offset':     p.offset,
+            'cloth_name':           cloth.name,
+            'all_originals':        all_originals,
+            'cloth_displacements':  cloth_displacements,
+            'cloth_adj':            cloth_adj,
+            'fitted_indices':       fitted_indices,
+            'preserved_indices':    preserved_indices,
+            'has_preserve':         has_preserve,
+            'preserve_name':        preserve_name,
+            'saved_uvs':            saved_uvs,
+            'cloth_body_normals':   cloth_body_normals,
+            'cloth_body_distances': cloth_body_distances,
+            'proximity_weights':    proximity_weights,
+            'original_offset':      p.offset,
             'offset_group_weights': offset_group_weights,
         }
 
@@ -652,6 +665,7 @@ class EFIT_OT_preview_apply(Operator):
 
         state._efit_cache.clear()
         p.fit_mode = 'FULL'
+        p.ui_tab   = 'FULL'
 
         bpy.ops.object.select_all(action='DESELECT')
         cloth.select_set(True)
@@ -700,7 +714,9 @@ class EFIT_OT_preview_cancel(Operator):
         state._efit_originals.pop(cloth.name, None)
         if "_efit_originals" in cloth:
             del cloth["_efit_originals"]
-        context.scene.efit_props.fit_mode = 'FULL'
+        p = context.scene.efit_props
+        p.fit_mode = 'FULL'
+        p.ui_tab   = 'FULL'
         self.report({'INFO'}, "Fit cancelled. Clothing restored.")
         return {'FINISHED'}
 
@@ -788,7 +804,7 @@ class EFIT_OT_reset_defaults(Operator):
     def execute(self, context):
         p = context.scene.efit_props
         for prop_name in (
-            'fit_mode',
+            'fit_mode', 'ui_tab',
             'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs',
             'smooth_factor', 'smooth_iterations',
             'post_symmetrize', 'symmetrize_axis',
@@ -796,6 +812,11 @@ class EFIT_OT_reset_defaults(Operator):
             'follow_strength', 'cleanup',
             'disp_smooth_passes', 'disp_smooth_threshold',
             'disp_smooth_min', 'disp_smooth_max', 'follow_neighbors',
+            'use_proximity_falloff', 'proximity_mode',
+            'proximity_start', 'proximity_end', 'proximity_curve',
+            'show_fit_settings', 'show_shape_preservation', 'show_preserve_group',
+            'show_proximity_falloff', 'show_displacement_smoothing',
+            'show_offset_fine_tuning', 'show_post_fit', 'show_misc',
         ):
             p.property_unset(prop_name)
         if state._efit_cache:

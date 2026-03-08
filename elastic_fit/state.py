@@ -111,3 +111,54 @@ def _remove_efit(obj):
             if idx + 2 < len(flat):
                 verts[vi].co = mathutils.Vector((flat[idx], flat[idx + 1], flat[idx + 2]))
         obj.data.update()
+
+
+# ---------------------------------------------------------------------------
+# Proximity falloff: pure curve functions and weight computation
+# ---------------------------------------------------------------------------
+
+def _proximity_curve_linear(t):
+    return 1.0 - t
+
+
+def _proximity_curve_smooth(t):
+    s = 1.0 - t
+    return s * s * (3.0 - 2.0 * s)
+
+
+def _proximity_curve_sharp(t):
+    return (1.0 - t) ** 2
+
+
+def _proximity_curve_root(t):
+    return math.sqrt(max(0.0, 1.0 - t))
+
+
+PROXIMITY_CURVES = {
+    'LINEAR': _proximity_curve_linear,
+    'SMOOTH': _proximity_curve_smooth,
+    'SHARP':  _proximity_curve_sharp,
+    'ROOT':   _proximity_curve_root,
+}
+
+
+def _compute_proximity_weights(distances, fitted_indices, start, end, curve_key):
+    """Return {vi: weight} falloff weights for fitted vertices based on body distance.
+
+    Vertices closer than start receive weight 1.0 (full fit pull).
+    Vertices beyond end receive weight 0.0 (no fit pull).
+    Vertices between start and end are mapped through the selected curve.
+    """
+    curve_fn = PROXIMITY_CURVES.get(curve_key, _proximity_curve_smooth)
+    span = max(end - start, 0.0001)
+    weights = {}
+    for vi in fitted_indices:
+        dist = distances.get(vi, 0.0)
+        if dist <= start:
+            weights[vi] = 1.0
+        elif dist >= end:
+            weights[vi] = 0.0
+        else:
+            t = (dist - start) / span
+            weights[vi] = max(0.0, min(1.0, curve_fn(t)))
+    return weights
