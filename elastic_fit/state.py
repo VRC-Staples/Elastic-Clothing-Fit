@@ -6,6 +6,7 @@
 
 import math
 import mathutils
+import numpy as np
 
 # Sidebar panel tab name.
 PANEL_CATEGORY = ".Staples. ECF"
@@ -29,6 +30,10 @@ _efit_originals = {}
 # writes vertex positions back to the mesh (which can retrigger update callbacks).
 _efit_updating = False
 
+# Cache for _has_blockers_cached.  Key: (obj.name, n_mods, n_shape_keys).
+# Cleared on every miss so stale keys never accumulate.
+_blocker_cache = {}
+
 
 def _mesh_poll(self, obj):
     """PointerProperty poll: restricts the eyedropper to mesh objects only."""
@@ -45,6 +50,23 @@ def _has_blockers(obj):
     mod_names = [m.name for m in obj.modifiers
                  if not m.name.startswith(EFIT_PREFIX) and m.type != 'ARMATURE']
     return has_sk, mod_names
+
+
+def _has_blockers_cached(obj):
+    """Cached wrapper around _has_blockers for use in panel draw() calls.
+
+    Blender calls draw() up to 60 times per second.  This caches the result
+    keyed by (name, modifier count, shape key count) and clears on any miss
+    so stale entries never accumulate.
+    """
+    n_mods = len(obj.modifiers)
+    n_sk   = (len(obj.data.shape_keys.key_blocks)
+              if obj.data.shape_keys else 0)
+    key = (obj.name, n_mods, n_sk)
+    if key not in _blocker_cache:
+        _blocker_cache.clear()
+        _blocker_cache[key] = _has_blockers(obj)
+    return _blocker_cache[key]
 
 
 def _calc_subdivisions(current_tris, target_tris):
@@ -65,23 +87,27 @@ def _calc_subdivisions(current_tris, target_tris):
 def _save_uvs(mesh):
     """Snapshot all UV layers on mesh into a dict keyed by layer name.
 
-    Returns {layer_name: [Vector2D, ...]} preserving loop order.
+    Returns {layer_name: np.ndarray} flat float32 buffer in loop order.
+    Uses foreach_get for a single C-level bulk read per layer.
     """
     uv_data = {}
     for uv_layer in mesh.uv_layers:
-        uv_data[uv_layer.name] = [loop.uv.copy() for loop in uv_layer.data]
+        buf = np.empty(len(uv_layer.data) * 2, dtype=np.float32)
+        uv_layer.data.foreach_get("uv", buf)
+        uv_data[uv_layer.name] = buf
     return uv_data
 
 
 def _restore_uvs(mesh, uv_data):
-    """Write UV coordinates saved by _save_uvs back onto mesh."""
-    for layer_name, coords in uv_data.items():
+    """Write UV coordinates saved by _save_uvs back onto mesh.
+
+    Uses foreach_set for a single C-level bulk write per layer.
+    """
+    for layer_name, buf in uv_data.items():
         uv_layer = mesh.uv_layers.get(layer_name)
         if uv_layer is None:
             continue
-        for i, loop in enumerate(uv_layer.data):
-            if i < len(coords):
-                loop.uv = coords[i]
+        uv_layer.data.foreach_set("uv", buf)
 
 
 def _remove_efit(obj):
@@ -105,11 +131,8 @@ def _remove_efit(obj):
         del obj["_efit_originals"]
 
     if flat is not None:
-        verts = obj.data.vertices
-        for vi in range(len(verts)):
-            idx = vi * 3
-            if idx + 2 < len(flat):
-                verts[vi].co = mathutils.Vector((flat[idx], flat[idx + 1], flat[idx + 2]))
+        buf = np.asarray(flat, dtype=np.float64)
+        obj.data.vertices.foreach_set("co", buf)
         obj.data.update()
 
 

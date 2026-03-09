@@ -8,7 +8,7 @@ from bpy.types import Panel
 
 from . import state
 from . import updater
-from .state import _has_blockers, PANEL_CATEGORY
+from .state import _has_blockers_cached, PANEL_CATEGORY
 
 
 def _wrap_text(text, max_chars=40, max_lines=3):
@@ -50,7 +50,7 @@ def _draw_mesh_pickers(layout, p, in_preview):
 def _draw_blocker_warnings(layout, p):
     if not (p.clothing_obj and p.clothing_obj.type == 'MESH'):
         return
-    has_sk, blocker_mods = _has_blockers(p.clothing_obj)
+    has_sk, blocker_mods = _has_blockers_cached(p.clothing_obj)
     if not (has_sk or blocker_mods):
         return
     warn_box       = layout.box()
