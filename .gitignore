@@ -1,5 +1,7 @@
 __pycache__*/
 .*/
+!.github/
+!.github/**
 .m*
 ElasticClothingFit-v*
 wiki/

@@ -1,0 +1,68 @@
+name: Nightly Dev Build
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 2 am UTC every day
+  push:
+    branches:
+      - dev-UX-Tuning
+  workflow_dispatch:       # manual trigger for testing
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # gh release create needs write access
+
+    env:
+      BLENDER_VERSION: "4.2.9"
+      BLENDER_DIR: "blender-4.2.9-linux-x64"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Blender
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: ~/blender-cache
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender
+        if: steps.cache-blender.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender-cache
+          cd ~/blender-cache
+          curl -L -O "https://download.blender.org/release/Blender4.2/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          tar -xJf "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          rm "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+
+      - name: Install xvfb
+        run: sudo apt-get install -y xvfb
+
+      - name: Build and test
+        run: |
+          BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
+          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
+
+      - name: Publish rolling nightly release
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ZIP=$(ls ElasticClothingFit-v*.zip | head -1)
+          gh release delete nightly --yes 2>/dev/null || true
+          git push origin :refs/tags/nightly 2>/dev/null || true
+          gh release create nightly "$ZIP" \
+            --title "Nightly Dev Build $(date -u '+%Y-%m-%d')" \
+            --notes "Auto-built from \`dev-UX-Tuning\` @ ${{ github.sha }}
+
+Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --prerelease \
+            --target dev-UX-Tuning
