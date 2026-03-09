@@ -32,11 +32,12 @@ For developer documentation, see the [Wiki](../../wiki).
 - **Live preview.** Adjust sliders and see changes in real-time before committing. Mesh selectors lock during preview to prevent accidental changes.
 - **UV preservation.** Original UVs are saved and restored after fitting so your texture work stays intact.
 - **Preserve Group.** Exclude vertex groups from fitting (e.g. waistbands, collars) with smooth blending at the border.
+- **Proximity Falloff.** Scale the fit effect by how close each clothing vertex is to the body. Vertices far from the body receive less (or no) displacement. Useful for loose garments where only the parts near the body need to conform.
 - **Crease smoothing.** Automatically softens sharp pinches in tight areas (like between legs) while leaving smooth regions untouched.
 - **Live smooth preview.** Shape correction and extra smoothing are applied as live modifiers during preview so you see the final result before applying.
 - **Post-fit options.** Optional shape correction, symmetrize, and extra smoothing applied on finalize.
 - **Offset fine-tuning.** Per-vertex-group offset overrides (0-1000%) for precise local control of the body gap.
-- **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, and follow parameters under Advanced Settings.
+- **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, proximity falloff, and follow parameters under Advanced Settings.
 - **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
 - **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.
@@ -52,6 +53,16 @@ The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
 
 ## Usage
 
+### Panel layout
+
+The panel has three tabs in the sidebar:
+
+- **Full** - Full Mesh Fit workflow (default)
+- **Exclusive** - Exclusive Vertex Group Fit workflow
+- **Update** - Update checker
+
+Tab switching is disabled while a preview is active.
+
 ### Fitting Clothing
 
 1. Select the **Body** and **Clothing** meshes in the panel
@@ -62,6 +73,7 @@ The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
    - **Elastic Strength / Iterations.** Shape correction visible live in the viewport
    - **Laplacian Smooth.** Toggle and tune extra smoothing visible live in the viewport
    - **Displacement Smoothing.** Controls for crease softening (under Advanced Settings)
+   - **Proximity Falloff.** Scale the fit by body distance (under Advanced Settings > Shape Preservation)
    - **Offset Fine Tuning.** Per-vertex-group offset multipliers (under Advanced Settings)
 4. Click **Apply** to finalize (bakes smoothing, runs symmetrize if enabled) or **Cancel** to revert
 
@@ -69,17 +81,19 @@ The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
 
 ### Fit Mode
 
-The **Fit Mode** dropdown lets you choose how much of the clothing is fitted:
+Switch between fit modes using the **Full** and **Exclusive** tabs in the sidebar:
 
-- **Full Mesh Fit** (default) - the entire clothing mesh is fitted to the body. Use the Preserve Group to lock specific areas such as waistbands or collars.
-- **Exclusive Vertex Group Fit (EVGF)** - only the vertex groups you list are fitted. Everything else on the mesh stays exactly where it is, with no follow blending needed.
+- **Full tab** - the entire clothing mesh is fitted to the body. Use the Preserve Group to lock specific areas such as waistbands or collars.
+- **Exclusive tab** - only the vertex groups you list are fitted. Everything else on the mesh stays exactly where it is, with no follow blending needed.
+
+Switching tabs automatically syncs the internal fit mode. Both tabs reset to Full after Apply or Cancel.
 
 #### Using Exclusive Vertex Group Fit
 
 EVGF is useful when you want to fit specific panels or regions of a garment without touching the rest of the mesh at all.
 
-1. Set **Fit Mode** to **Exclusive Vertex Group Fit**
-2. Under **Advanced Settings**, click **Add Group** in the **Groups to Fit** list
+1. Switch to the **Exclusive** tab
+2. Click **Add Group** in the **Groups to Fit** list
 3. Select a vertex group from the clothing mesh
 4. Set the **Influence** slider for that group (0-1000%):
    - **100%** - neutral, uses the base offset
@@ -98,6 +112,20 @@ To keep parts of the clothing in place (e.g. a waistband):
 3. Preserved vertices will follow the fitted mesh smoothly based on **Follow Strength**
 
 Preserved vertices are not fitted directly. Instead, they follow the movement of nearby fitted vertices with weighted blending, so the border between preserved and fitted areas stays smooth. If a fitted area is pushed outward by Offset Fine Tuning, nearby preserved vertices will follow that push naturally. Preserved vertices themselves are never directly affected by Offset Fine Tuning.
+
+### Proximity Falloff
+
+Proximity Falloff scales the fit effect based on how far each clothing vertex is from the body surface. Vertices close to the body receive the full displacement. Vertices already far away receive less (or none at all). This is useful for loose garments where only the parts near the body need to conform.
+
+1. Expand **Advanced Settings** and open **Shape Preservation**
+2. Enable **Use Proximity Falloff**
+3. Set **Start** and **End** distances (in meters). Vertices closer than Start get full effect. Vertices beyond End get no effect. Vertices in between are ramped through the selected curve.
+4. Choose a **Curve** shape: Linear, Smooth, Sharp, or Root
+5. Choose a **Mode**:
+   - **Pre-Fit** - distances are measured before the fit runs (based on the original clothing position)
+   - **Post-Fit** - distances are measured after fitting (based on where vertices end up)
+
+All four controls update live during preview.
 
 ### Post-Fit Options
 
@@ -150,6 +178,16 @@ Influence sliders update live during preview. Changing which vertex group is sel
 | Follow Neighbors | 8 | How many fitted vertices preserved verts sample when following (max 64) |
 | Influence (per group) | 100% | Per-vertex-group offset multiplier (0-1000%) |
 
+### Proximity Falloff (under Advanced Settings > Shape Preservation)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| Use Proximity Falloff | Off | Enable falloff scaling by body distance |
+| Mode | Pre-Fit | Whether distances are measured before or after the fit runs |
+| Start | 0.01 m | Distance below which vertices receive full effect |
+| End | 0.05 m | Distance above which vertices receive no effect |
+| Curve | Smooth | Falloff curve shape: Linear, Smooth, Sharp, or Root |
+
 ## Preview Mode Reference
 
 When a fit is active, the panel enters **Preview Mode**. The following controls update live:
@@ -164,6 +202,7 @@ When a fit is active, the panel enters **Preview Mode**. The following controls 
 | Displacement Smoothing (Advanced Settings) | Yes |
 | Follow Strength / Neighbors | Yes |
 | Offset Fine Tuning groups | Yes |
+| Proximity Falloff (toggle + sliders) | Yes |
 | Proxy Resolution | No (re-fit required) |
 | Preserve UVs | No (re-fit required) |
 | Symmetrize | No (applied on finalize only) |

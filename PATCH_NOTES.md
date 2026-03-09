@@ -1,5 +1,57 @@
 # Patch Notes
 
+## v1.0.5
+
+### 3-tab panel layout
+
+The sidebar panel has been reorganized into three tabs:
+
+- **Full** - Full Mesh Fit workflow (the default)
+- **Exclusive** - Exclusive Vertex Group Fit workflow
+- **Update** - Update checker (previously at the bottom of every tab)
+
+Tab switching is disabled while a preview is active. Switching between Full and Exclusive tabs automatically syncs the internal fit mode. Both tabs reset to Full after Apply or Cancel.
+
+### Advanced Settings consolidated
+
+All settings are now under a single **Advanced Settings** collapse toggle. Previously, Fit Settings was pinned above a separate Advanced box. Now everything is one level deep under the toggle, making the panel easier to scan.
+
+### Section consolidation
+
+- **Proximity Falloff controls** moved inline into the **Shape Preservation** section. Enabling the toggle expands the mode, start, end, and curve controls directly beneath it. The separate Proximity Falloff section has been removed.
+- **Post-Laplacian controls** moved inline into the **Displacement Smoothing** section. Enabling the toggle expands the factor and iteration sliders directly beneath it. These controls were previously in the Post-Fit section.
+
+### Proximity Falloff
+
+A new system that scales the fit effect based on how close each clothing vertex is to the body surface. Vertices close to the body receive the full displacement; vertices already far away receive less (or none at all). Useful for loose garments where only parts of the mesh need to conform.
+
+- Enable with the **Use Proximity Falloff** toggle in the **Shape Preservation** section
+- **Mode** - `Pre-Fit` measures distances before fitting (based on how the clothing sits before the fit runs); `Post-Fit` uses the post-fit result
+- **Start** / **End** - distance range in meters over which the falloff ramps from full effect to none
+- **Curve** - shape of the falloff ramp: Linear, Smooth, Sharp, or Root
+- All four sliders update live during preview
+
+### UI polish
+
+- **Onboarding hint.** When neither body nor clothing mesh is selected, the mesh picker area shows a short hint: "Pick your avatar body, then the clothing item to fit." The hint disappears as soon as the user starts selecting.
+- **Duplicate mesh alert.** If the same mesh is selected for both body and clothing, a red alert box appears immediately in the mesh picker section. The Fit button stays greyed out until different objects are selected.
+- **Remove Fit conditional state.** The Remove Fit button is now greyed out when no fit data is stored for the current clothing mesh. Previously it was always enabled even when there was nothing to remove.
+
+### Performance improvements
+
+The fitting pipeline and live preview have been overhauled to eliminate unnecessary work on every slider drag.
+
+- **Bulk vertex I/O.** Vertex positions and UV coordinates are now read and written using Blender's `foreach_get` / `foreach_set` APIs, which perform the full buffer copy in a single C-level call. Previously each vertex was read or written through the Python-to-C bridge individually.
+- **Median calculation.** The adaptive smoothing passes compute the median gradient using Python's `statistics.median()` (O(n) quickselect) instead of sorting the full array each pass (O(n log n)). The improvement is most noticeable at high smooth pass counts on large meshes.
+- **Neighbor average accumulation.** Inside each smoothing pass, the per-vertex neighbor average is now computed as three plain float additions instead of allocating a `mathutils.Vector` object per vertex. This eliminates several hundred thousand object allocations per fit at Final quality.
+- **Edge adjacency build.** The edge adjacency table is now built using a numpy bulk read + boolean mask, skipping the Python loop over all edges for the fitness check.
+- **Vertex group queries.** All vertex group weight lookups that previously used `vg.weight(vi)` with `try/except RuntimeError` (Blender's only API for checking group membership) have been replaced with iteration over `v.groups`. The previous pattern constructed a Python exception object for every vertex not in a group; the new pattern has no exception overhead.
+- **Body vertex buffer.** The body mesh vertex list passed to `BVHTree.FromPolygons` no longer creates a full `.copy()` of every vertex position. The BVH reads the positions directly.
+- **Conditional position snapshot.** The per-fitted-vertex position snapshot taken before offset fine-tuning is now skipped entirely when there are no offset groups and no preserve group. This avoids a full mesh traversal on the common case.
+- **Panel blocker detection cached.** `_has_blockers` (which checks for shape keys and incompatible modifiers) is now cached between frames in `state.py`. Blender calls the panel's `draw()` method up to 60 times per second; without the cache this ran a full modifier iteration on every frame. The cache key is `(object_name, modifier_count, shape_key_count)` and clears automatically on any change.
+
+---
+
 ## v1.0.4
 
 ### In-panel update checker
