@@ -3,4 +3,5 @@ __pycache__*/
 .m*
 ElasticClothingFit-v*
 wiki/
-*.blend
+docs/
+*.blend*
