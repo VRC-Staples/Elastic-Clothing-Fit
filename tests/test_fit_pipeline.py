@@ -8,9 +8,9 @@
 #
 # Run each STEP_* block via mcp__blender__execute_blender_code in order.
 
-BLEND_PATH    = r"C:\Users\Staples\Documents\GitHub\Elastic-Clothing-Fit\tests\BaseBodyDinzeeTiedWithLoveSetBeforeFitTutorialBase.blend"
-BODY_NAME     = "Skin"
-CLOTHING_NAME = "Dinzee's tied With Love Set_Egirl"
+BLEND_PATH    = r"C:\Users\Staples\Documents\GitHub\Elastic-Clothing-Fit\tests\ECF_Test.blend"
+BODY_NAME     = "Body"
+CLOTHING_NAME = "Outfit"
 
 # ============================================================
 # STEP 1-3: Load scene, pick meshes, run fit
@@ -19,9 +19,9 @@ STEP_1_TO_3 = '''
 import bpy
 import sys
 
-BLEND_PATH    = r"C:\\Users\\Staples\\Documents\\GitHub\\Elastic-Clothing-Fit\\tests\\BaseBodyDinzeeTiedWithLoveSetBeforeFitTutorialBase.blend"
-BODY_NAME     = "Skin"
-CLOTHING_NAME = "Dinzee's tied With Love Set_Egirl"
+BLEND_PATH    = r"C:\\Users\\Staples\\Documents\\GitHub\\Elastic-Clothing-Fit\\tests\\ECF_Test.blend"
+BODY_NAME     = "Body"
+CLOTHING_NAME = "Outfit"
 
 def _assert_true(condition, label):
     status = "PASS" if condition else "FAIL"
@@ -75,7 +75,7 @@ def _assert_true(condition, label):
     return condition
 
 print("\\n=== STEP 4: Adjust fit_amount, verify vertices moved ===")
-CLOTHING_NAME = "Clothing"
+CLOTHING_NAME = "Outfit"
 p     = bpy.context.scene.efit_props
 cloth = bpy.data.objects[CLOTHING_NAME]
 
@@ -110,7 +110,7 @@ def _assert_true(condition, label):
 
 print("\\n=== STEP 5: Verify no clipping ===")
 BODY_NAME     = "Body"
-CLOTHING_NAME = "Clothing"
+CLOTHING_NAME = "Outfit"
 p      = bpy.context.scene.efit_props
 cloth  = bpy.data.objects[CLOTHING_NAME]
 body   = bpy.data.objects[BODY_NAME]
@@ -147,7 +147,7 @@ def _assert_true(condition, label):
     print(f"  [{status}] {label}")
     return condition
 
-CLOTHING_NAME = "Dinzee's tied With Love Set_Egirl"
+CLOTHING_NAME = "Outfit"
 cloth = bpy.data.objects[CLOTHING_NAME]
 
 _win  = bpy.context.window_manager.windows[0]
