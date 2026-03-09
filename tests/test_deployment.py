@@ -55,8 +55,7 @@ p = bpy.context.scene.efit_props
 _assert_equal(p.ui_tab,   'FULL', "ui_tab default is FULL")
 _assert_equal(p.fit_mode, 'FULL', "fit_mode default is FULL")
 _assert_true(
-    bpy.utils.find_spec('elastic_fit') is not None or
-    'SVRC_PT_elastic_fit' in dir(bpy.types),
+    hasattr(bpy.types, 'SVRC_PT_elastic_fit'),
     "panel class registered"
 )
 
@@ -75,10 +74,51 @@ _assert_true(
 )
 
 print("\\n=== STEP 7: Uninstall addon ===")
-result = bpy.ops.preferences.addon_remove(module='elastic_fit')
+_window = bpy.context.window_manager.windows[0]
+_area   = _window.screen.areas[0]
+with bpy.context.temp_override(window=_window, area=_area):
+    result = bpy.ops.preferences.addon_remove(module='elastic_fit')
 _assert_equal(result, {'FINISHED'}, "addon_remove returned FINISHED")
 
-print("\\n=== PHASE 1 COMPLETE -- Restart Blender, then run PHASE_2 ===")
+print("\\n=== STEP 8: Restart Blender with MCP auto-start ===")
+import subprocess, os
+
+# Write a one-shot startup script that starts the BlenderMCP server after Blender loads.
+_startup_dir = os.path.join(bpy.utils.script_path_user(), 'startup')
+os.makedirs(_startup_dir, exist_ok=True)
+_script_path = os.path.join(_startup_dir, '_efit_test_mcp_autostart.py')
+_script_body = """
+import bpy, os
+
+def _start_mcp():
+    try:
+        win = bpy.context.window_manager.windows[0]
+        with bpy.context.temp_override(window=win):
+            bpy.ops.blendermcp.start_server()
+        print("[MCP autostart] server started")
+    except Exception as e:
+        print(f"[MCP autostart] failed: {e}")
+    try:
+        os.remove(__file__)
+    except Exception:
+        pass
+    return None  # do not repeat
+
+bpy.app.timers.register(_start_mcp, first_interval=3.0)
+"""
+with open(_script_path, 'w') as _f:
+    _f.write(_script_body)
+print(f"  Startup script written: {_script_path}")
+
+_exe = bpy.app.binary_path
+subprocess.Popen(
+    [_exe],
+    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+    close_fds=True,
+)
+print("  [PASS] new Blender process spawned")
+print("  Quitting current session...")
+bpy.ops.wm.quit_blender()
 '''
 
 # ============================================================

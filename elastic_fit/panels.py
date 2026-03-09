@@ -37,8 +37,14 @@ def _draw_mesh_pickers(layout, p, in_preview):
     box         = layout.box()
     box.enabled = not in_preview
     box.label(text="Select Meshes", icon='MESH_DATA')
+    if not p.body_obj and not p.clothing_obj:
+        box.label(text="Pick your avatar body, then the clothing item to fit.", icon='INFO')
     box.prop(p, "body_obj",     icon='OUTLINER_OB_MESH')
     box.prop(p, "clothing_obj", icon='MATCLOTH')
+    if p.body_obj and p.clothing_obj and p.body_obj == p.clothing_obj:
+        dup = box.box()
+        dup.alert = True
+        dup.label(text="Body and clothing must be different meshes.", icon='ERROR')
 
 
 def _draw_blocker_warnings(layout, p):
@@ -62,7 +68,7 @@ def _draw_blocker_warnings(layout, p):
     warn_box.operator("efit.clear_blockers", icon='TRASH')
 
 
-def _draw_action_buttons(layout, in_preview):
+def _draw_action_buttons(layout, p, in_preview):
     layout.separator()
     if in_preview:
         box = layout.box()
@@ -73,10 +79,19 @@ def _draw_action_buttons(layout, in_preview):
         row.operator("efit.preview_apply",  icon='CHECKMARK', text="Apply")
         row.operator("efit.preview_cancel", icon='CANCEL',    text="Cancel")
     else:
+        cloth    = p.clothing_obj
+        has_fit  = bool(
+            cloth and (
+                cloth.name in state._efit_originals
+                or "_efit_originals" in cloth
+            )
+        )
         row         = layout.row(align=True)
         row.scale_y = 1.5
-        row.operator("efit.fit",    icon='CHECKMARK')
-        row.operator("efit.remove", icon='X')
+        row.operator("efit.fit", icon='CHECKMARK')
+        sub         = row.column()
+        sub.enabled = has_fit
+        sub.operator("efit.remove", icon='X')
 
 
 def _collapsible(layout, p, prop_name):
@@ -118,6 +133,13 @@ def _draw_shape_preservation(layout, p):
     col = layout.column(align=True)
     col.prop(p, "smooth_factor")
     col.prop(p, "smooth_iterations")
+    layout.prop(p, "use_proximity_falloff")
+    if p.use_proximity_falloff:
+        col = layout.column(align=True)
+        col.prop(p, "proximity_mode")
+        col.prop(p, "proximity_start")
+        col.prop(p, "proximity_end")
+        col.prop(p, "proximity_curve")
 
 
 def _draw_preserve_group(layout, p):
@@ -131,22 +153,17 @@ def _draw_preserve_group(layout, p):
         layout.label(text="Select clothing first", icon='INFO')
 
 
-def _draw_proximity_falloff(layout, p):
-    layout.prop(p, "use_proximity_falloff")
-    if p.use_proximity_falloff:
-        col = layout.column(align=True)
-        col.prop(p, "proximity_mode")
-        col.prop(p, "proximity_start")
-        col.prop(p, "proximity_end")
-        col.prop(p, "proximity_curve")
-
-
 def _draw_displacement_smoothing(layout, p):
     col = layout.column(align=True)
     col.prop(p, "disp_smooth_passes")
     col.prop(p, "disp_smooth_threshold")
     col.prop(p, "disp_smooth_min")
     col.prop(p, "disp_smooth_max")
+    layout.prop(p, "post_laplacian")
+    if p.post_laplacian:
+        col = layout.column(align=True)
+        col.prop(p, "laplacian_factor")
+        col.prop(p, "laplacian_iterations")
 
 
 def _draw_offset_fine_tuning(layout, p, in_preview):
@@ -176,11 +193,6 @@ def _draw_post_fit(layout, p, in_preview):
     row.prop(p, "post_symmetrize")
     if p.post_symmetrize and not in_preview:
         row.prop(p, "symmetrize_axis", text="")
-    layout.prop(p, "post_laplacian")
-    if p.post_laplacian:
-        col = layout.column(align=True)
-        col.prop(p, "laplacian_factor")
-        col.prop(p, "laplacian_iterations")
 
 
 def _draw_misc(layout, p):
@@ -281,39 +293,40 @@ def _draw_update_tab(layout, context):
 def _full_tab(layout, p, in_preview):
     _draw_mesh_pickers(layout, p, in_preview)
     _draw_blocker_warnings(layout, p)
-    _draw_action_buttons(layout, in_preview)
+    _draw_action_buttons(layout, p, in_preview)
 
     layout.separator()
 
     if in_preview:
         layout.label(text="Some options are locked during preview.", icon='INFO')
 
-    _section(layout, p, 'show_fit_settings',          _draw_fit_settings,          p, in_preview)
-    _section(layout, p, 'show_shape_preservation',    _draw_shape_preservation,    p)
-    _section(layout, p, 'show_preserve_group',        _draw_preserve_group,        p)
-    _section(layout, p, 'show_proximity_falloff',     _draw_proximity_falloff,     p)
-    _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
-    _section(layout, p, 'show_offset_fine_tuning',    _draw_offset_fine_tuning,    p, in_preview)
-    _section(layout, p, 'show_post_fit',              _draw_post_fit,              p, in_preview)
-    _section(layout, p, 'show_misc',                  _draw_misc,                  p)
+    if _collapsible(layout, p, 'show_advanced'):
+        _section(layout, p, 'show_fit_settings',          _draw_fit_settings,          p, in_preview)
+        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p)
+        _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
+        _section(layout, p, 'show_preserve_group',         _draw_preserve_group,        p)
+        _section(layout, p, 'show_offset_fine_tuning',    _draw_offset_fine_tuning,    p, in_preview)
+        _section(layout, p, 'show_post_fit',              _draw_post_fit,              p, in_preview)
+        _section(layout, p, 'show_misc',                  _draw_misc,                  p)
 
 
 def _exclusive_tab(layout, p, in_preview):
     _draw_mesh_pickers(layout, p, in_preview)
     _draw_blocker_warnings(layout, p)
     _draw_exclusive_groups(layout, p, in_preview)
-    _draw_action_buttons(layout, in_preview)
+    _draw_action_buttons(layout, p, in_preview)
 
     layout.separator()
 
     if in_preview:
         layout.label(text="Some options are locked during preview.", icon='INFO')
 
-    _section(layout, p, 'show_fit_settings',           _draw_fit_settings,          p, in_preview)
-    _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p)
-    _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
-    _section(layout, p, 'show_post_fit',               _draw_post_fit,              p, in_preview)
-    _section(layout, p, 'show_misc',                   _draw_misc,                  p)
+    if _collapsible(layout, p, 'show_advanced'):
+        _section(layout, p, 'show_fit_settings',           _draw_fit_settings,          p, in_preview)
+        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p)
+        _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
+        _section(layout, p, 'show_post_fit',               _draw_post_fit,              p, in_preview)
+        _section(layout, p, 'show_misc',                   _draw_misc,                  p)
 
 
 # ---------------------------------------------------------------------------

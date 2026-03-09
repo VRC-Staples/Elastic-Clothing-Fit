@@ -815,7 +815,7 @@ class EFIT_OT_reset_defaults(Operator):
             'use_proximity_falloff', 'proximity_mode',
             'proximity_start', 'proximity_end', 'proximity_curve',
             'show_fit_settings', 'show_shape_preservation', 'show_preserve_group',
-            'show_proximity_falloff', 'show_displacement_smoothing',
+            'show_displacement_smoothing',
             'show_offset_fine_tuning', 'show_post_fit', 'show_misc',
         ):
             p.property_unset(prop_name)

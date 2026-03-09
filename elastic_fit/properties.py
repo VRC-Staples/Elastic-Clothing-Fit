@@ -109,7 +109,7 @@ class EFitProperties(PropertyGroup):
 
     show_fit_settings: BoolProperty(
         name="Fit Settings",
-        default=True,
+        default=False,
     )
     show_shape_preservation: BoolProperty(
         name="Shape Preservation",
