@@ -68,7 +68,20 @@ from .operators import (
     EFIT_OT_browse_local_zip,
 )
 from .panels import SVRC_PT_elastic_fit
+from . import state
 from . import updater
+
+
+@bpy.app.handlers.persistent
+def _efit_session_cleanup_on_load(_):
+    """Clear in-memory caches when a new .blend file is loaded.
+
+    Prevents stale numpy arrays from previous sessions lingering in memory.
+    Accessing cleared entries gracefully degrades (object lookups return None).
+    """
+    state._efit_cache.clear()
+    state._efit_originals.clear()
+
 
 # Registration order matters: PropertyGroups used as CollectionProperty types
 # must be registered before the PropertyGroup that holds them.
@@ -99,10 +112,13 @@ def register():
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.efit_props = PointerProperty(type=EFitProperties)
+    bpy.app.handlers.load_post.append(_efit_session_cleanup_on_load)
     updater.check_for_update()
 
 
 def unregister():
+    if _efit_session_cleanup_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_efit_session_cleanup_on_load)
     del bpy.types.Scene.efit_props
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

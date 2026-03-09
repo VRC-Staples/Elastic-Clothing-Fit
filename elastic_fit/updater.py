@@ -97,6 +97,12 @@ RELEASES_URL = (
     "https://api.github.com/repos/VRC-Staples/Elastic-Clothing-Fit/releases/latest"
 )
 
+_VALID_DOWNLOAD_DOMAINS = (
+    'https://github.com/',
+    'https://objects.githubusercontent.com/',
+    'https://github-releases.githubusercontent.com/',
+)
+
 
 def check_for_update():
     """Spawn a background thread that queries the GitHub releases API.
@@ -116,7 +122,6 @@ def _check_thread():
     try:
         import urllib.request
         import json
-        import ssl
 
         # --- read dev overrides from add-on preferences + scene properties ---
         try:
@@ -140,15 +145,7 @@ def _check_thread():
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read().decode('utf-8'))
 
-        try:
-            data = _fetch(req)
-        except Exception as ssl_err:
-            # Retry with unverified SSL context as a fallback.
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode    = ssl.CERT_NONE
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
+        data = _fetch(req)
 
         tag_name = data.get('tag_name', '')
         if not tag_name:
@@ -176,6 +173,12 @@ def _check_thread():
         if not zip_url:
             _state['status'] = 'error'
             _state['error']  = 'No zip asset in release'
+            _schedule_redraw()
+            return
+
+        if not any(zip_url.startswith(d) for d in _VALID_DOWNLOAD_DOMAINS):
+            _state['status'] = 'error'
+            _state['error']  = 'Unexpected download URL domain'
             _schedule_redraw()
             return
 
@@ -228,7 +231,6 @@ def _download_thread():
     zip_path = ''
     try:
         import urllib.request
-        import ssl
 
         tag         = _state['tag']
         url         = _state['url']
@@ -245,13 +247,7 @@ def _download_thread():
         def _open(req):
             return urllib.request.urlopen(req, timeout=60)
 
-        try:
-            resp = _open(req)
-        except Exception:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode    = ssl.CERT_NONE
-            resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+        resp = _open(req)
 
         total = int(resp.headers.get('Content-Length', 0) or 0)
         chunk_size = 65536  # 64 KB
