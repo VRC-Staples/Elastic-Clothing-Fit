@@ -5,8 +5,6 @@
 # The remaining operators handle preview apply/cancel, remove, clear blockers,
 # reset defaults, and offset group list management.
 
-import statistics
-
 import numpy as np
 import mathutils
 from mathutils.kdtree import KDTree
@@ -142,7 +140,10 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
 
     Returns (proxy_pre, proxy_post).
     """
-    proxy_pre = [v.co.copy() for v in proxy.data.vertices]
+    _n_proxy = len(proxy.data.vertices)
+    _buf_pre = np.empty(_n_proxy * 3, dtype=np.float64)
+    proxy.data.vertices.foreach_get("co", _buf_pre)
+    proxy_pre = [mathutils.Vector(_buf_pre[i*3:i*3+3]) for i in range(_n_proxy)]
 
     bpy.ops.object.select_all(action='DESELECT')
     proxy.select_set(True)
@@ -155,7 +156,9 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
     mod_sw.offset       = p.offset
 
     bpy.ops.object.modifier_apply(modifier=mod_sw.name)
-    proxy_post = [v.co.copy() for v in proxy.data.vertices]
+    _buf_post = np.empty(_n_proxy * 3, dtype=np.float64)
+    proxy.data.vertices.foreach_get("co", _buf_post)
+    proxy_post = [mathutils.Vector(_buf_post[i*3:i*3+3]) for i in range(_n_proxy)]
 
     # Zero out displacement for proxy vertices that are topologically closer
     # to a preserved clothing vertex than a fitted one, so deformation does
@@ -245,26 +248,8 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     # Precompute per-fitted-vertex weights for offset influence groups.
     # In EVGF mode the exclusive groups carry their own influence sliders;
     # in Full Mesh Fit mode the offset_groups list is used instead.
-    # Iterates v.groups to avoid try/except-as-flow-control overhead.
-    offset_group_weights = {}
-    for og in source_groups:
-        if not og.group_name:
-            continue
-        vg = cloth.vertex_groups.get(og.group_name)
-        if vg is None:
-            continue
-        vg_idx     = vg.index
-        fitted_set = set(fitted_indices)
-        full_wmap  = {}
-        for v in cloth.data.vertices:
-            if v.index not in fitted_set:
-                continue
-            for g in v.groups:
-                if g.group == vg_idx and g.weight > 0.0:
-                    full_wmap[v.index] = g.weight
-                    break
-        if full_wmap:
-            offset_group_weights[og.group_name] = full_wmap
+    offset_group_weights = state._compute_offset_group_weights(
+        cloth, source_groups, fitted_indices)
 
     # Build a fitted-only edge adjacency dict.  Edges that cross the
     # preserve boundary are excluded so adaptive smoothing cannot bleed
@@ -272,7 +257,6 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     # Uses foreach_get for a bulk read then numpy masking to filter edges
     # before the Python adjacency loop, which is much faster on large meshes.
     n_verts    = len(cloth.data.vertices)
-    fitted_set = set(fitted_indices)
     cloth_adj  = {vi: [] for vi in fitted_indices}
     n_edges    = len(cloth.data.edges)
     edge_buf   = np.empty(n_edges * 2, dtype=np.int32)
@@ -305,51 +289,9 @@ def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
     ds_min         = p.disp_smooth_min
     ds_max         = p.disp_smooth_max
 
-    # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
-    # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
-    # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
-    # between pant legs) while leaving smooth regions untouched.
-    for _pass in range(ds_passes):
-        gradient = {}
-        for vi in fitted_indices:
-            neighbors = cloth_adj[vi]
-            if not neighbors:
-                gradient[vi] = 0.0
-                continue
-            d        = smoothed[vi]
-            max_diff = 0.0
-            for ni in neighbors:
-                diff = (d - smoothed[ni]).length
-                if diff > max_diff:
-                    max_diff = diff
-            gradient[vi] = max_diff
-
-        # statistics.median is O(n) via quickselect -- no full sort needed.
-        median_grad = statistics.median(gradient.values()) if gradient else 0.0
-
-        new_smoothed = {}
-        for vi in fitted_indices:
-            neighbors = cloth_adj[vi]
-            if not neighbors:
-                new_smoothed[vi] = smoothed[vi].copy()
-                continue
-            g         = gradient[vi]
-            threshold = max(median_grad * ds_thresh_mult, 0.0001)
-            if g <= threshold:
-                blend = ds_min
-            else:
-                t     = min(1.0, (g - threshold) / max(threshold, 0.0001))
-                blend = ds_min + (ds_max - ds_min) * t
-            # Accumulate neighbor average as plain floats -- avoids
-            # allocating a mathutils.Vector per vertex per pass.
-            ax = ay = az = 0.0
-            for ni in neighbors:
-                s = smoothed[ni]
-                ax += s.x; ay += s.y; az += s.z
-            n_n = len(neighbors)
-            avg = mathutils.Vector((ax / n_n, ay / n_n, az / n_n))
-            new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
-        smoothed = new_smoothed
+    smoothed = state._apply_disp_smoothing(
+        smoothed, fitted_indices, cloth_adj,
+        ds_passes, ds_thresh_mult, ds_min, ds_max)
 
     # Write all fitted vertices in a single foreach_set call instead of
     # N individual Python-to-C bridge crossings.
@@ -376,6 +318,10 @@ def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
     the body surface; 200% doubles the gap.
     """
     base_offset = p.offset
+    n_verts = len(cloth.data.vertices)
+    co_buf  = np.empty(n_verts * 3, dtype=np.float64)
+    cloth.data.vertices.foreach_get("co", co_buf)
+    changed = False
     for og in source_groups:
         if not og.group_name:
             continue
@@ -388,9 +334,15 @@ def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
             continue
         for vi, w in og_weights.items():
             if vi in cloth_body_normals:
-                cloth.data.vertices[vi].co += (
-                    cloth_body_normals[vi] * (base_offset * mult_delta * w)
-                )
+                n     = cloth_body_normals[vi]
+                delta = base_offset * mult_delta * w
+                base  = vi * 3
+                co_buf[base]     += n.x * delta
+                co_buf[base + 1] += n.y * delta
+                co_buf[base + 2] += n.z * delta
+                changed = True
+    if changed:
+        cloth.data.vertices.foreach_set("co", co_buf)
     cloth.data.update()
 
 
@@ -414,6 +366,10 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
 
     K_follow = min(p.follow_neighbors, len(fitted_indices))
 
+    n_verts = len(cloth.data.vertices)
+    co_buf  = np.empty(n_verts * 3, dtype=np.float64)
+    cloth.data.vertices.foreach_get("co", co_buf)
+
     for vi in preserved_indices:
         rest_pos  = all_originals[vi]
         neighbors = kd_follow.find_n(rest_pos, K_follow)
@@ -421,7 +377,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
         total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
         total_weight = 0.0
 
-        for co, idx, dist in neighbors:
+        for _co, idx, dist in neighbors:
             ni    = fitted_indices[idx]
             disp  = pre_offset_positions[ni] - all_originals[ni]
             w     = 1.0 / max(dist, 0.0001)
@@ -430,8 +386,13 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
 
         if total_weight > 0.0:
             avg_disp = total_disp / total_weight
-            cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
+            res  = rest_pos + avg_disp * strength
+            base = vi * 3
+            co_buf[base]     = res.x
+            co_buf[base + 1] = res.y
+            co_buf[base + 2] = res.z
 
+    cloth.data.vertices.foreach_set("co", co_buf)
     cloth.data.update()
 
 
@@ -579,10 +540,15 @@ class EFIT_OT_fit(Operator):
         # Only snapshot when needed -- skips an expensive per-vertex copy for users
         # with no preserve group and no offset groups.
         needs_pre_pos = bool(offset_group_weights) or (has_preserve and preserved_indices)
-        pre_offset_positions = (
-            {vi: cloth.data.vertices[vi].co.copy() for vi in fitted_indices}
-            if needs_pre_pos else {}
-        )
+        if needs_pre_pos:
+            _n    = len(cloth.data.vertices)
+            _snap = np.empty(_n * 3, dtype=np.float64)
+            cloth.data.vertices.foreach_get("co", _snap)
+            pre_offset_positions = {
+                vi: mathutils.Vector(_snap[vi*3:vi*3+3]) for vi in fitted_indices
+            }
+        else:
+            pre_offset_positions = {}
 
         # -- Offset fine-tuning --
         if offset_group_weights:
@@ -732,16 +698,19 @@ class EFIT_OT_preview_cancel(Operator):
             self.report({'ERROR'}, "Clothing object no longer exists.")
             return {'CANCELLED'}
 
-        all_originals = c['all_originals']
-
         # Remove live preview modifiers before restoring vertex positions.
         for mod_name in (f"{EFIT_PREFIX}Smooth", f"{EFIT_PREFIX}Laplacian"):
             m = cloth.modifiers.get(mod_name)
             if m is not None:
                 cloth.modifiers.remove(m)
 
-        for vi, co in all_originals.items():
-            cloth.data.vertices[vi].co = co
+        flat = state._efit_originals.get(cloth.name)
+        if flat is not None:
+            cloth.data.vertices.foreach_set("co", np.asarray(flat, dtype=np.float64))
+        else:
+            all_originals = c['all_originals']
+            for vi, co in all_originals.items():
+                cloth.data.vertices[vi].co = co
         cloth.data.update()
 
         state._efit_cache.clear()

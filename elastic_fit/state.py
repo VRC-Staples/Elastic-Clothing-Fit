@@ -5,6 +5,7 @@
 # these names here is visible across the whole package.
 
 import math
+import statistics
 import mathutils
 import numpy as np
 
@@ -174,14 +175,95 @@ def _compute_proximity_weights(distances, fitted_indices, start, end, curve_key)
     """
     curve_fn = PROXIMITY_CURVES.get(curve_key, _proximity_curve_smooth)
     span = max(end - start, 0.0001)
-    weights = {}
-    for vi in fitted_indices:
-        dist = distances.get(vi, 0.0)
-        if dist <= start:
-            weights[vi] = 1.0
-        elif dist >= end:
-            weights[vi] = 0.0
-        else:
-            t = (dist - start) / span
-            weights[vi] = max(0.0, min(1.0, curve_fn(t)))
-    return weights
+
+    vi_arr   = np.array(fitted_indices, dtype=np.int32)
+    dist_arr = np.array([distances.get(vi, 0.0) for vi in fitted_indices], dtype=np.float64)
+    t_arr    = np.clip((dist_arr - start) / span, 0.0, 1.0)
+    w_arr    = np.vectorize(curve_fn)(t_arr)
+    w_arr    = np.where(dist_arr <= start, 1.0, np.where(dist_arr >= end, 0.0, w_arr))
+
+    return dict(zip(vi_arr.tolist(), w_arr.tolist()))
+
+
+def _apply_disp_smoothing(smoothed, fitted_indices, cloth_adj,
+                          ds_passes, ds_thresh_mult, ds_min, ds_max):
+    """Apply adaptive multi-pass displacement smoothing and return the result.
+
+    Each pass computes a per-vertex displacement gradient (max diff to edge
+    neighbors).  Vertices above median*threshold are blended hard toward the
+    neighbor average (ds_max); those below are blended lightly (ds_min).
+    Fixes creases in concave areas while leaving smooth regions untouched.
+
+    Returns the smoothed dict (new dict; input is not modified in place).
+    """
+    for _pass in range(ds_passes):
+        gradient = {}
+        for vi in fitted_indices:
+            neighbors = cloth_adj[vi]
+            if not neighbors:
+                gradient[vi] = 0.0
+                continue
+            d        = smoothed[vi]
+            max_diff = 0.0
+            for ni in neighbors:
+                diff = (d - smoothed[ni]).length
+                if diff > max_diff:
+                    max_diff = diff
+            gradient[vi] = max_diff
+
+        # statistics.median is O(n) via quickselect -- no full sort needed.
+        median_grad = statistics.median(gradient.values()) if gradient else 0.0
+
+        new_smoothed = {}
+        for vi in fitted_indices:
+            neighbors = cloth_adj[vi]
+            if not neighbors:
+                new_smoothed[vi] = smoothed[vi].copy()
+                continue
+            g         = gradient[vi]
+            threshold = max(median_grad * ds_thresh_mult, 0.0001)
+            if g <= threshold:
+                blend = ds_min
+            else:
+                t     = min(1.0, (g - threshold) / max(threshold, 0.0001))
+                blend = ds_min + (ds_max - ds_min) * t
+            # Accumulate neighbor average as plain floats -- avoids
+            # allocating a mathutils.Vector per vertex per pass.
+            ax = ay = az = 0.0
+            for ni in neighbors:
+                s = smoothed[ni]
+                ax += s.x; ay += s.y; az += s.z
+            n_n = len(neighbors)
+            avg = mathutils.Vector((ax / n_n, ay / n_n, az / n_n))
+            new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
+        smoothed = new_smoothed
+    return smoothed
+
+
+def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
+    """Return per-vertex weights for each offset group entry.
+
+    Iterates v.groups to avoid try/except-as-flow-control overhead.
+    Returns {group_name: {vi: weight}} for all groups with non-zero membership
+    in fitted_indices.
+    """
+    fitted_set = set(fitted_indices)
+    offset_group_weights = {}
+    for og in offset_groups:
+        if not og.group_name:
+            continue
+        vg = cloth.vertex_groups.get(og.group_name)
+        if vg is None:
+            continue
+        vg_idx  = vg.index
+        weights = {}
+        for v in cloth.data.vertices:
+            if v.index not in fitted_set:
+                continue
+            for g in v.groups:
+                if g.group == vg_idx and g.weight > 0.0:
+                    weights[v.index] = g.weight
+                    break
+        if weights:
+            offset_group_weights[og.group_name] = weights
+    return offset_group_weights
