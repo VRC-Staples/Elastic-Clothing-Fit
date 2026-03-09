@@ -48,7 +48,6 @@ toggle_props = [
     "show_fit_settings",
     "show_shape_preservation",
     "show_preserve_group",
-    "show_proximity_falloff",
     "show_displacement_smoothing",
     "show_offset_fine_tuning",
     "show_post_fit",
@@ -61,8 +60,8 @@ for prop in toggle_props:
     _assert_equal(getattr(p, prop), not original, f"{prop!r} toggles correctly")
     setattr(p, prop, original)  # restore
 
-print("\\n=== STEP 6: show_advanced still exists (deprecated, no warnings) ===")
-_assert_true(hasattr(p, 'show_advanced'), "show_advanced property still present (deprecated)")
+print("\\n=== STEP 6: show_advanced is the master advanced toggle ===")
+_assert_true(hasattr(p, 'show_advanced'), "show_advanced property present (master advanced toggle)")
 
 print("\\n=== ALL UX TAB TESTS COMPLETE ===")
 '''
