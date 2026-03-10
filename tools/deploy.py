@@ -143,8 +143,8 @@ def _build_zip(version, nightly=False):
     Returns the zip path as a pathlib.Path.
     """
     if nightly:
-        today = datetime.date.today().strftime('%Y%m%d')
-        zip_name = f"ElasticClothingFit-v{version}-nightly-{today}.zip"
+        ts = datetime.datetime.now().strftime('%Y%m%d%H%M')
+        zip_name = f"ElasticClothingFit-v{version}-nightly-{ts}.zip"
     else:
         zip_name = f"ElasticClothingFit-v{version}.zip"
     zip_path = _ROOT / zip_name
@@ -154,8 +154,8 @@ def _build_zip(version, nightly=False):
                 continue
             zf.write(f, f.relative_to(_ROOT))
         if nightly:
-            build_date = datetime.date.today().strftime("%Y-%m-%d")
-            zf.writestr("elastic_fit/_nightly.txt", build_date)
+            ts = datetime.datetime.now().strftime('%Y%m%d%H%M')
+            zf.writestr("elastic_fit/_nightly.txt", ts)
     return zip_path
 
 
@@ -394,7 +394,7 @@ def main():
     )
     build_p.add_argument(
         "--nightly", action="store_true",
-        help="Name zip with nightly date suffix (ElasticClothingFit-vX.Y.Z-nightly-YYYYMMDD.zip)"
+        help="Name zip with nightly timestamp suffix (ElasticClothingFit-vX.Y.Z-nightly-YYYYMMDDHHMM.zip)"
     )
 
     select_p = sub.add_parser("select", help="Select an existing zip and run deployment test")
