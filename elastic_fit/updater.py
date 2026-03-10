@@ -134,10 +134,14 @@ def _parse_nightly_asset(assets):
 
 
 def _installed_nightly_ts():
-    """Return the build timestamp stored in _nightly.txt, or '' if absent."""
+    """Return the build timestamp (YYYYMMDDHHMM) from _nightly.txt, or '' if absent.
+
+    _nightly.txt format: '<timestamp> <short-hash>' -- only the timestamp is used
+    for version comparison; the hash is display-only.
+    """
     try:
         with open(_NIGHTLY_MARKER, 'r', encoding='utf-8') as fh:
-            return fh.read().strip()
+            return fh.read().strip().split()[0]
     except Exception:
         return ''
 
