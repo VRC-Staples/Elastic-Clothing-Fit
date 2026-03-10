@@ -153,6 +153,9 @@ def _build_zip(version, nightly=False):
             if f.suffix == ".pyc" or "__pycache__" in f.parts:
                 continue
             zf.write(f, f.relative_to(_ROOT))
+        if nightly:
+            build_date = datetime.date.today().strftime("%Y-%m-%d")
+            zf.writestr("elastic_fit/_nightly.txt", build_date)
     return zip_path
 
 

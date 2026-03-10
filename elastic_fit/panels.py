@@ -3,12 +3,18 @@
 # Three-tab layout: Full Mesh Fit, Exclusive Fit, Update.
 # Each tab has pinned controls (always visible) and collapsible sections.
 
+import pathlib
+
 import bpy
 from bpy.types import Panel
 
 from . import state
 from . import updater
 from .state import _has_blockers_cached, PANEL_CATEGORY
+
+# Populated at install time by the nightly build process.
+_nightly_path = pathlib.Path(__file__).parent / "_nightly.txt"
+_NIGHTLY_DATE = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
 
 
 def _wrap_text(text, max_chars=40, max_lines=3):
@@ -230,9 +236,12 @@ def _draw_update_tab(layout, context):
     s = updater.get_state()
 
     # --- version header ---
+    version_str = f"v{'.'.join(str(x) for x in bl_info['version'])}"
+    if _NIGHTLY_DATE:
+        version_str += f"  (nightly dev {_NIGHTLY_DATE})"
     split = layout.split(factor=0.4)
     split.label(text="Addon")
-    split.label(text=f"v{'.'.join(str(x) for x in bl_info['version'])}")
+    split.label(text=version_str)
     split = layout.split(factor=0.4)
     split.label(text="Blender")
     split.label(text='.'.join(str(x) for x in bpy.app.version))
