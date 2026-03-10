@@ -617,9 +617,6 @@ class EFIT_OT_preview_apply(Operator):
             state._efit_cache.clear()
             return {'CANCELLED'}
 
-        preserve_name     = c.get('preserve_name', '')
-        has_preserve      = c['has_preserve']
-        preserved_indices = c['preserved_indices']
         saved_uvs         = c.get('saved_uvs')
 
         if context.active_object and context.active_object.mode != 'OBJECT':
@@ -633,27 +630,6 @@ class EFIT_OT_preview_apply(Operator):
         m_cs = cloth.modifiers.get(f"{EFIT_PREFIX}Smooth")
         if m_cs is not None:
             bpy.ops.object.modifier_apply(modifier=m_cs.name)
-
-        # Symmetrize: enter edit mode, select all non-preserved verts, run symmetrize.
-        if p.post_symmetrize:
-            bpy.ops.object.select_all(action='DESELECT')
-            cloth.select_set(True)
-            context.view_layer.objects.active = cloth
-            bpy.ops.object.mode_set(mode='EDIT')
-            import bmesh
-            bm = bmesh.from_edit_mesh(cloth.data)
-            bm.verts.ensure_lookup_table()
-            for v in bm.verts:
-                v.select = True
-            if has_preserve and preserved_indices:
-                pres_set = set(preserved_indices)
-                for v in bm.verts:
-                    if v.index in pres_set:
-                        v.select = False
-            bm.select_flush(True)
-            bmesh.update_edit_mesh(cloth.data)
-            bpy.ops.mesh.symmetrize(direction=p.symmetrize_axis)
-            bpy.ops.object.mode_set(mode='OBJECT')
 
         # Apply the laplacian smooth modifier if present.
         m_lap = cloth.modifiers.get(f"{EFIT_PREFIX}Laplacian")
@@ -810,7 +786,6 @@ class EFIT_OT_reset_defaults(Operator):
             'fit_mode', 'ui_tab',
             'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs',
             'smooth_factor', 'smooth_iterations',
-            'post_symmetrize', 'symmetrize_axis',
             'post_laplacian', 'laplacian_factor', 'laplacian_iterations',
             'follow_strength', 'cleanup',
             'disp_smooth_passes', 'disp_smooth_threshold',
@@ -819,7 +794,7 @@ class EFIT_OT_reset_defaults(Operator):
             'proximity_start', 'proximity_end', 'proximity_curve',
             'show_fit_settings', 'show_shape_preservation', 'show_preserve_group',
             'show_displacement_smoothing',
-            'show_offset_fine_tuning', 'show_post_fit', 'show_misc',
+            'show_offset_fine_tuning', 'show_misc',
         ):
             p.property_unset(prop_name)
         if state._efit_cache:

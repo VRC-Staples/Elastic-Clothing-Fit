@@ -106,6 +106,13 @@ NIGHTLY_URL = (
 
 _NIGHTLY_MARKER = os.path.join(os.path.dirname(__file__), "_nightly.txt")
 
+_DEV_MODE_MARKER = os.path.join(os.path.dirname(__file__), "_dev_mode")
+
+
+def _is_dev_mode():
+    return os.path.exists(_DEV_MODE_MARKER)
+
+
 _VALID_DOWNLOAD_DOMAINS = (
     'https://github.com/',
     'https://objects.githubusercontent.com/',
@@ -187,16 +194,26 @@ def _check_thread():
 
         # --- read channel preference ---
         try:
-            p           = bpy.context.scene.efit_props
-            use_nightly = p.use_nightly_channel
+            p            = bpy.context.scene.efit_props
+            use_nightly  = p.use_nightly_channel
+            dev_url_base = p.dev_update_url.strip() if _is_dev_mode() else ''
         except Exception:
-            use_nightly = False
+            use_nightly  = False
+            dev_url_base = ''
+
+        if dev_url_base:
+            _base        = dev_url_base.rstrip('/')
+            releases_url = _base + '/repos/VRC-Staples/Elastic-Clothing-Fit/releases/latest'
+            nightly_url  = _base + '/repos/VRC-Staples/Elastic-Clothing-Fit/releases/tags/nightly'
+        else:
+            releases_url = RELEASES_URL
+            nightly_url  = NIGHTLY_URL
 
         installed_channel = _installed_channel()
         remote_ts = ''
 
         if use_nightly:
-            data = _fetch(NIGHTLY_URL)
+            data = _fetch(nightly_url)
             assets = data.get('assets', [])
             remote_version, zip_url, remote_ts = _parse_nightly_asset(assets)
             if remote_version is None or not zip_url:
@@ -207,7 +224,7 @@ def _check_thread():
             blender_min = _parse_blender_min(data.get('body', ''))
             tag_name = data.get('tag_name', 'nightly')
         else:
-            data = _fetch(RELEASES_URL)
+            data = _fetch(releases_url)
             tag_name = data.get('tag_name', '')
             if not tag_name:
                 _state['status'] = 'error'
@@ -235,7 +252,8 @@ def _check_thread():
             _schedule_redraw()
             return
 
-        if not any(zip_url.startswith(d) for d in _VALID_DOWNLOAD_DOMAINS):
+        valid_domains = _VALID_DOWNLOAD_DOMAINS + (('http://localhost',) if _is_dev_mode() else ())
+        if not any(zip_url.startswith(d) for d in valid_domains):
             _state['status'] = 'error'
             _state['error']  = 'Unexpected download URL domain'
             _schedule_redraw()

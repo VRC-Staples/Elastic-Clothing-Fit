@@ -192,14 +192,6 @@ def _draw_offset_fine_tuning(layout, p, in_preview):
     add_row.operator("efit.offset_group_add", text="Add Group", icon='ADD')
 
 
-def _draw_post_fit(layout, p, in_preview):
-    row         = layout.row()
-    row.enabled = not in_preview
-    row.prop(p, "post_symmetrize")
-    if p.post_symmetrize and not in_preview:
-        row.prop(p, "symmetrize_axis", text="")
-
-
 def _draw_misc(layout, p):
     layout.prop(p, "cleanup")
     layout.operator("efit.reset_defaults", icon='LOOP_BACK')
@@ -259,6 +251,8 @@ def _draw_update_tab(layout, context):
 
     # --- nightly channel toggle ---
     layout.prop(p, "use_nightly_channel")
+    if updater._is_dev_mode():
+        layout.prop(p, "dev_update_url")
     layout.separator()
 
     if s['status'] == 'checking':
@@ -329,7 +323,6 @@ def _full_tab(layout, p, in_preview):
         _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
         _section(layout, p, 'show_preserve_group',         _draw_preserve_group,        p)
         _section(layout, p, 'show_offset_fine_tuning',    _draw_offset_fine_tuning,    p, in_preview)
-        _section(layout, p, 'show_post_fit',              _draw_post_fit,              p, in_preview)
         _section(layout, p, 'show_misc',                  _draw_misc,                  p)
 
 
@@ -345,7 +338,6 @@ def _exclusive_tab(layout, p, in_preview):
         _section(layout, p, 'show_fit_settings',           _draw_fit_settings,          p, in_preview)
         _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p)
         _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
-        _section(layout, p, 'show_post_fit',               _draw_post_fit,              p, in_preview)
         _section(layout, p, 'show_misc',                   _draw_misc,                  p)
 
 

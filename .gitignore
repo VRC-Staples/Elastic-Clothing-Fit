@@ -7,3 +7,4 @@ ElasticClothingFit-v*
 wiki/
 docs/
 *.blend*
+elastic_fit/_dev_mode

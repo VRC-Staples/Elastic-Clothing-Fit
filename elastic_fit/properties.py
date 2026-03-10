@@ -131,10 +131,6 @@ class EFitProperties(PropertyGroup):
         name="Offset Fine Tuning",
         default=False,
     )
-    show_post_fit: BoolProperty(
-        name="Post-Fit Options",
-        default=False,
-    )
     show_misc: BoolProperty(
         name="Misc",
         default=False,
@@ -220,27 +216,6 @@ class EFitProperties(PropertyGroup):
         min=0,
         max=100,
         update=_on_smooth_mod_update,
-    )
-
-    # -- Post-fit options --
-
-    post_symmetrize: BoolProperty(
-        name="Symmetrize",
-        description="Mirror one side of the clothing to the other after fitting",
-        default=False,
-    )
-    symmetrize_axis: EnumProperty(
-        name="Axis",
-        description="Which side to mirror from and to",
-        items=[
-            ('POSITIVE_X', "+X to -X", "Mirror positive X side to negative X"),
-            ('NEGATIVE_X', "-X to +X", "Mirror negative X side to positive X"),
-            ('POSITIVE_Y', "+Y to -Y", "Mirror positive Y side to negative Y"),
-            ('NEGATIVE_Y', "-Y to +Y", "Mirror negative Y side to positive Y"),
-            ('POSITIVE_Z', "+Z to -Z", "Mirror positive Z side to negative Z"),
-            ('NEGATIVE_Z', "-Z to +Z", "Mirror negative Z side to positive Z"),
-        ],
-        default='POSITIVE_X',
     )
 
     post_laplacian: BoolProperty(
@@ -419,4 +394,12 @@ class EFitProperties(PropertyGroup):
             "Nightly builds may contain bugs and instability."
         ),
         default=False,
+    )
+
+    # -- Dev mode update server (only visible when _dev_mode marker file exists) --
+
+    dev_update_url: StringProperty(
+        name="Update Server URL",
+        description="Base URL for update checks (dev mode only)",
+        default="http://localhost:8198",
     )
