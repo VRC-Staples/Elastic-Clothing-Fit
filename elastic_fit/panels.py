@@ -244,7 +244,7 @@ def _draw_update_tab(layout, context):
     split.label(text=version_str)
     split = layout.split(factor=0.4)
     split.label(text="Blender")
-    split.label(text='.'.join(str(x) for x in bpy.app.version))
+    split.label(text=f"v{'.'.join(str(x) for x in bpy.app.version)}")
     layout.separator()
 
     # --- nightly channel toggle ---
