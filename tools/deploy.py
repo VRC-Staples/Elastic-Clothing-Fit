@@ -155,7 +155,15 @@ def _build_zip(version, nightly=False):
             zf.write(f, f.relative_to(_ROOT))
         if nightly:
             ts = datetime.datetime.now().strftime('%Y%m%d%H%M')
-            zf.writestr("elastic_fit/_nightly.txt", ts)
+            try:
+                result = subprocess.run(
+                    ['git', 'rev-parse', '--short=7', 'HEAD'],
+                    capture_output=True, text=True, cwd=str(_ROOT),
+                )
+                short_hash = result.stdout.strip() if result.returncode == 0 else 'unknown'
+            except Exception:
+                short_hash = 'unknown'
+            zf.writestr("elastic_fit/_nightly.txt", f"{ts} {short_hash}")
     return zip_path
 
 

@@ -237,11 +237,18 @@ def _draw_update_tab(layout, context):
     version_str = f"v{'.'.join(str(x) for x in bl_info['version'])}"
     nightly_ts = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
     if nightly_ts:
-        if len(nightly_ts) == 12 and nightly_ts.isdigit():
-            display_ts = f"{nightly_ts[:4]}-{nightly_ts[4:6]}-{nightly_ts[6:8]} {nightly_ts[8:10]}:{nightly_ts[10:12]}"
+        parts = nightly_ts.split()
+        ts_part = parts[0] if parts else nightly_ts
+        commit_part = parts[1] if len(parts) > 1 else ''
+        if len(ts_part) >= 8 and ts_part[:8].isdigit():
+            d = ts_part[:8]
+            display_date = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
         else:
-            display_ts = nightly_ts
-        version_str += f"  (nightly dev {display_ts})"
+            display_date = ts_part
+        suffix = f"-nightly ({display_date})"
+        if commit_part:
+            suffix += f" [{commit_part}]"
+        version_str += suffix
     split = layout.split(factor=0.4)
     split.label(text="Addon")
     split.label(text=version_str)
