@@ -5,6 +5,7 @@
 # so the startup script can reinstall the add-on automatically.
 
 import os
+import re
 import sys
 import threading
 import subprocess
@@ -19,13 +20,16 @@ from . import state
 # ---------------------------------------------------------------------------
 
 _state = {
-    'status':   'idle',   # idle | checking | available | up_to_date | downloading | ready | error
-    'tag':      '',       # e.g. 'v1.0.5'
-    'version':  None,     # tuple e.g. (1, 0, 5)
-    'url':      '',       # browser_download_url of the release zip asset
-    'zip_path': '',       # local path once downloaded
-    'progress': 0.0,      # 0.0-1.0 during download
-    'error':    '',       # short error string shown in the panel
+    'status':             'idle',  # idle | checking | available | up_to_date | downloading | ready | error
+    'tag':                '',      # e.g. 'v1.0.5'
+    'version':            None,    # tuple e.g. (1, 0, 5)
+    'url':                '',      # browser_download_url of the release zip asset
+    'zip_path':           '',      # local path once downloaded
+    'progress':           0.0,     # 0.0-1.0 during download
+    'error':              '',      # short error string shown in the panel
+    'blender_min':        None,    # minimum blender version tuple required by remote release
+    'blender_blocked':    False,   # True if installed Blender is below blender_min
+    'blender_min_required': None,  # copy of blender_min for panel display
 }
 
 
@@ -96,12 +100,44 @@ _CURRENT_VERSION = _read_installed_version()
 RELEASES_URL = (
     "https://api.github.com/repos/VRC-Staples/Elastic-Clothing-Fit/releases/latest"
 )
+NIGHTLY_URL = (
+    "https://api.github.com/repos/VRC-Staples/Elastic-Clothing-Fit/releases/tags/nightly"
+)
+
+_NIGHTLY_MARKER = os.path.join(os.path.dirname(__file__), "_nightly")
 
 _VALID_DOWNLOAD_DOMAINS = (
     'https://github.com/',
     'https://objects.githubusercontent.com/',
     'https://github-releases.githubusercontent.com/',
 )
+
+_NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{8})\.zip$")
+
+
+def _installed_channel():
+    """Return 'nightly' if the installed addon contains the marker file, else 'stable'."""
+    return 'nightly' if os.path.exists(_NIGHTLY_MARKER) else 'stable'
+
+
+def _parse_nightly_asset(assets):
+    """Return (version_tuple, download_url) from a nightly release asset list."""
+    for asset in assets:
+        m = _NIGHTLY_RE.search(asset.get('name', ''))
+        if m:
+            ver = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            return ver, asset['browser_download_url']
+    return None, None
+
+
+def _parse_blender_min(body):
+    """Parse BLENDER_MIN=X.Y.Z from release notes body. Returns tuple or None."""
+    if not body:
+        return None
+    m = re.search(r'BLENDER_MIN=(\d+)\.(\d+)\.(\d+)', body)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return None
 
 
 def check_for_update():
@@ -123,52 +159,58 @@ def _check_thread():
         import urllib.request
         import json
 
-        # --- read dev overrides from add-on preferences + scene properties ---
-        try:
-            addon_prefs  = bpy.context.preferences.addons.get(__package__)
-            dev_testing  = addon_prefs.preferences.dev_update_testing if addon_prefs else False
-            p            = bpy.context.scene.efit_props
-            dev_newer    = p.dev_override_newer
-            dev_uptodate = p.dev_override_uptodate
-        except Exception:
-            dev_testing  = False
-            dev_newer    = False
-            dev_uptodate = False
+        current = _get_current_version()
 
-        # --- fetch latest release from GitHub ---
-        req = urllib.request.Request(
-            RELEASES_URL,
-            headers={'User-Agent': 'ElasticClothingFit-Updater'},
-        )
-
-        def _fetch(req):
+        def _fetch(url):
+            req = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'ElasticClothingFit-Updater'},
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read().decode('utf-8'))
 
-        data = _fetch(req)
+        # --- read channel preference ---
+        try:
+            p           = bpy.context.scene.efit_props
+            use_nightly = p.use_nightly_channel
+        except Exception:
+            use_nightly = False
 
-        tag_name = data.get('tag_name', '')
-        if not tag_name:
-            _state['status'] = 'error'
-            _state['error']  = 'No releases found'
-            _schedule_redraw()
-            return
+        installed_channel = _installed_channel()
 
-        remote_version = _parse_version(tag_name)
-        if remote_version is None:
-            _state['status'] = 'error'
-            _state['error']  = f'Could not parse version: {tag_name}'
-            _schedule_redraw()
-            return
-
-        # Find the zip asset.
-        assets  = data.get('assets', [])
-        zip_url = ''
-        for asset in assets:
-            name = asset.get('name', '')
-            if name.endswith('.zip'):
-                zip_url = asset.get('browser_download_url', '')
-                break
+        if use_nightly:
+            data = _fetch(NIGHTLY_URL)
+            assets = data.get('assets', [])
+            remote_version, zip_url = _parse_nightly_asset(assets)
+            if remote_version is None or not zip_url:
+                _state['status'] = 'error'
+                _state['error']  = 'No nightly zip asset found'
+                _schedule_redraw()
+                return
+            blender_min = _parse_blender_min(data.get('body', ''))
+            tag_name = data.get('tag_name', 'nightly')
+        else:
+            data = _fetch(RELEASES_URL)
+            tag_name = data.get('tag_name', '')
+            if not tag_name:
+                _state['status'] = 'error'
+                _state['error']  = 'No releases found'
+                _schedule_redraw()
+                return
+            remote_version = _parse_version(tag_name)
+            if remote_version is None:
+                _state['status'] = 'error'
+                _state['error']  = f'Could not parse version: {tag_name}'
+                _schedule_redraw()
+                return
+            assets  = data.get('assets', [])
+            zip_url = ''
+            for asset in assets:
+                name = asset.get('name', '')
+                if name.endswith('.zip'):
+                    zip_url = asset.get('browser_download_url', '')
+                    break
+            blender_min = _parse_blender_min(data.get('body', ''))
 
         if not zip_url:
             _state['status'] = 'error'
@@ -186,16 +228,28 @@ def _check_thread():
         _state['version'] = remote_version
         _state['url']     = zip_url
 
-        # --- version comparison (with dev override support) ---
-        # In dev mode, overrides only apply when explicitly checked.
-        # Neither override checked → fall through to the real comparison.
-        current = _get_current_version()
-        if dev_testing and dev_uptodate:
-            _state['status'] = 'up_to_date'
-        elif dev_testing and dev_newer:
-            _state['status'] = 'available'
+        # --- blender minimum version check ---
+        _state['blender_min']          = blender_min
+        _state['blender_min_required'] = blender_min
+        if blender_min and bpy.app.version < blender_min:
+            _state['blender_blocked'] = True
         else:
-            if remote_version > current:
+            _state['blender_blocked'] = False
+
+        # --- version comparison ---
+        if use_nightly:
+            # When fetching nightly: same version nightly == up to date;
+            # higher remote nightly == available.
+            if installed_channel == 'nightly' and remote_version == current:
+                _state['status'] = 'up_to_date'
+            else:
+                _state['status'] = 'available' if remote_version >= current else 'up_to_date'
+        else:
+            # When fetching stable: if we're on nightly of the same version,
+            # switching to stable is an upgrade.
+            if installed_channel == 'nightly' and remote_version >= current:
+                _state['status'] = 'available'
+            elif remote_version > current:
                 _state['status'] = 'available'
             else:
                 _state['status'] = 'up_to_date'
@@ -289,46 +343,17 @@ def _download_thread():
 def install_and_restart(reopen_filepath=''):
     """Write a one-shot startup script and relaunch Blender.
 
-    In normal mode the startup script installs the downloaded zip.
-    In dev-testing mode it installs the user-specified local zip instead.
+    The startup script installs the downloaded zip.
     If reopen_filepath is provided the startup script will reopen that
     .blend file after the addon is installed.
 
     Called on the main thread from the operator.
     """
-    try:
-        addon_prefs = bpy.context.preferences.addons.get(__package__)
-        dev_mode    = addon_prefs.preferences.dev_update_testing if addon_prefs else False
-        p           = bpy.context.scene.efit_props
-        local_zip   = p.dev_local_zip.strip() if dev_mode else ''
-    except Exception:
-        dev_mode  = False
-        local_zip = ''
-
-    # Determine which zip to install and whether to delete it after install.
-    # local zip provided → use it, keep it (reusable across test cycles)
-    # dev mode + no local zip → fall through to GitHub downloaded zip
-    # normal mode → GitHub downloaded zip, delete after install
-    using_local_zip = False
-    if dev_mode and local_zip:
-        if not os.path.isfile(local_zip):
-            _state['status'] = 'error'
-            _state['error']  = f'Dev mode: file not found: {local_zip}'
-            return
-        install_zip     = local_zip
-        using_local_zip = True
-    elif dev_mode:
-        install_zip = _state.get('zip_path', '')
-        if not install_zip or not os.path.isfile(install_zip):
-            _state['status'] = 'error'
-            _state['error']  = 'No downloaded zip found. Click Download first.'
-            return
-    else:
-        install_zip = _state.get('zip_path', '')
-        if not install_zip or not os.path.isfile(install_zip):
-            _state['status'] = 'error'
-            _state['error']  = 'Downloaded zip not found'
-            return
+    install_zip = _state.get('zip_path', '')
+    if not install_zip or not os.path.isfile(install_zip):
+        _state['status'] = 'error'
+        _state['error']  = 'Downloaded zip not found'
+        return
 
     startup_dir = os.path.join(bpy.utils.user_resource('SCRIPTS'), 'startup')
     os.makedirs(startup_dir, exist_ok=True)
@@ -336,9 +361,7 @@ def install_and_restart(reopen_filepath=''):
 
     # Build the startup script as a string.
     # Use repr() for the paths so backslashes are safely escaped.
-    # Local dev zips are kept so they can be reused across test cycles.
-    # GitHub-downloaded zips are always deleted after install.
-    delete_zip_line = "" if using_local_zip else "        try: os.remove(zip_path)\n        except: pass\n"
+    # GitHub-downloaded zips are deleted after install.
     reopen_block = (
         "\n"
         "def _reopen():\n"
@@ -356,7 +379,8 @@ def install_and_restart(reopen_filepath=''):
         "        bpy.ops.preferences.addon_install(overwrite=True, filepath=zip_path)\n"
         "        bpy.ops.preferences.addon_enable(module='elastic_fit')\n"
         "        bpy.ops.wm.save_userpref()\n"
-        f"{delete_zip_line}"
+        "        try: os.remove(zip_path)\n"
+        "        except: pass\n"
         "    try: os.remove(script_path)\n"
         "    except: pass\n"
         "\n"

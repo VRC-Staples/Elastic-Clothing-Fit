@@ -8,7 +8,7 @@
 import bpy
 from bpy.props import (
     PointerProperty, FloatProperty, IntProperty, BoolProperty,
-    StringProperty, EnumProperty, CollectionProperty,
+    EnumProperty, CollectionProperty,
 )
 from bpy.types import PropertyGroup
 
@@ -410,20 +410,13 @@ class EFitProperties(PropertyGroup):
         default=True,
     )
 
-    # -- Developer / update-testing overrides --
+    # -- Update channel --
 
-    dev_local_zip: StringProperty(
-        name="Local Zip",
-        description="Local zip file to install instead of the GitHub download in dev testing mode",
-        default="",
-    )
-    dev_override_newer: BoolProperty(
-        name="Force: GitHub is newer",
-        description="Treat GitHub version as newer than current regardless of actual versions",
-        default=False,
-    )
-    dev_override_uptodate: BoolProperty(
-        name="Force: Already up to date",
-        description="Treat current version as up to date regardless of actual versions",
+    use_nightly_channel: BoolProperty(
+        name="Nightly Dev Build",
+        description=(
+            "Check for and install nightly development builds instead of stable releases. "
+            "Nightly builds may contain bugs and instability."
+        ),
         default=False,
     )

@@ -32,25 +32,11 @@ bl_info = {
 }
 
 import bpy
-from bpy.props import BoolProperty, PointerProperty
+from bpy.props import PointerProperty
 
 from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProperties
 
 
-class EFIT_AddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
-
-    dev_update_testing: BoolProperty(
-        name="Developer Testing",
-        description=(
-            "Enable developer testing overrides for the update system. "
-            "When on, install uses the local zip file instead of the GitHub download."
-        ),
-        default=False,
-    )
-
-    def draw(self, context):
-        self.layout.prop(self, "dev_update_testing")
 from .operators import (
     EFIT_OT_fit,
     EFIT_OT_preview_apply,
@@ -65,7 +51,6 @@ from .operators import (
     EFIT_OT_check_update,
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
-    EFIT_OT_browse_local_zip,
 )
 from .panels import SVRC_PT_elastic_fit
 from . import state
@@ -86,7 +71,6 @@ def _efit_session_cleanup_on_load(_):
 # Registration order matters: PropertyGroups used as CollectionProperty types
 # must be registered before the PropertyGroup that holds them.
 _classes = (
-    EFIT_AddonPreferences,
     EFitExclusiveGroup,
     EFitOffsetGroup,
     EFitProperties,
@@ -103,7 +87,6 @@ _classes = (
     EFIT_OT_check_update,
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
-    EFIT_OT_browse_local_zip,
     SVRC_PT_elastic_fit,
 )
 

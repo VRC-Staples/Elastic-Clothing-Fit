@@ -37,7 +37,7 @@ def _draw_mesh_pickers(layout, p, in_preview):
     box         = layout.box()
     box.enabled = not in_preview
     box.label(text="Select Meshes", icon='MESH_DATA')
-    if not p.body_obj and not p.clothing_obj:
+    if not p.body_obj or not p.clothing_obj:
         box.label(text="Pick your avatar body, then the clothing item to fit.", icon='INFO')
     box.prop(p, "body_obj",     icon='OUTLINER_OB_MESH')
     box.prop(p, "clothing_obj", icon='MATCLOTH')
@@ -86,12 +86,13 @@ def _draw_action_buttons(layout, p, in_preview):
                 or "_efit_originals" in cloth
             )
         )
-        row         = layout.row(align=True)
-        row.scale_y = 1.5
-        row.operator("efit.fit", icon='CHECKMARK')
-        sub         = row.column()
-        sub.enabled = has_fit
-        sub.operator("efit.remove", icon='X')
+        fit_row         = layout.row()
+        fit_row.scale_y = 1.5
+        fit_row.operator("efit.fit", icon='CHECKMARK')
+        rm_row         = layout.row()
+        rm_row.scale_y = 1.2
+        rm_row.enabled = has_fit
+        rm_row.operator("efit.remove", icon='X')
 
 
 def _collapsible(layout, p, prop_name):
@@ -196,9 +197,8 @@ def _draw_post_fit(layout, p, in_preview):
 
 
 def _draw_misc(layout, p):
-    row = layout.row()
-    row.prop(p, "cleanup")
-    row.operator("efit.reset_defaults", icon='LOOP_BACK')
+    layout.prop(p, "cleanup")
+    layout.operator("efit.reset_defaults", icon='LOOP_BACK')
 
 
 def _draw_exclusive_groups(layout, p, in_preview):
@@ -225,7 +225,22 @@ def _draw_exclusive_groups(layout, p, in_preview):
 
 
 def _draw_update_tab(layout, context):
+    from . import bl_info
+    p = context.scene.efit_props
     s = updater.get_state()
+
+    # --- version header ---
+    split = layout.split(factor=0.4)
+    split.label(text="Addon")
+    split.label(text=f"v{'.'.join(str(x) for x in bl_info['version'])}")
+    split = layout.split(factor=0.4)
+    split.label(text="Blender")
+    split.label(text='.'.join(str(x) for x in bpy.app.version))
+    layout.separator()
+
+    # --- nightly channel toggle ---
+    layout.prop(p, "use_nightly_channel")
+    layout.separator()
 
     if s['status'] == 'checking':
         layout.label(text="Checking for updates...", icon='SORTTIME')
@@ -237,7 +252,13 @@ def _draw_update_tab(layout, context):
 
     elif s['status'] == 'available':
         layout.label(text=f"Update available: {s['tag']}", icon='ERROR')
-        layout.operator("efit.download_update",
+        if s.get('blender_blocked'):
+            req = s['blender_min_required']
+            req_str = '.'.join(str(x) for x in req)
+            layout.label(text=f"Requires Blender {req_str} or later.", icon='ERROR')
+        dl_col = layout.column()
+        dl_col.enabled = not s.get('blender_blocked', False)
+        dl_col.operator("efit.download_update",
                         text=f"Download {s['tag']}", icon='IMPORT')
         layout.operator("efit.check_update", text="Re-check", icon='FILE_REFRESH')
 
@@ -246,7 +267,6 @@ def _draw_update_tab(layout, context):
         layout.label(text=f"Downloading... {pct}%", icon='SORTTIME')
 
     elif s['status'] == 'ready':
-        p = context.scene.efit_props
         layout.label(text=f"{s['tag']} downloaded.", icon='INFO')
         has_filepath = bool(bpy.data.filepath)
         if has_filepath:
@@ -272,19 +292,6 @@ def _draw_update_tab(layout, context):
         row.label(text="", icon='CHECKMARK')
         row.operator("efit.check_update", text="Check for Updates", icon='FILE_REFRESH')
 
-    addon_prefs = context.preferences.addons.get(__package__)
-    dev_mode    = addon_prefs.preferences.dev_update_testing if addon_prefs else False
-    if dev_mode:
-        p             = context.scene.efit_props
-        dev_box       = layout.box()
-        dev_box.alert = True
-        dev_box.label(text="Dev mode: install uses local file only", icon='ERROR')
-        zip_row = dev_box.row(align=True)
-        zip_row.prop(p, "dev_local_zip", text="Local Zip")
-        zip_row.operator("efit.browse_local_zip", text="", icon='FILE_FOLDER')
-        dev_box.prop(p, "dev_override_newer")
-        dev_box.prop(p, "dev_override_uptodate")
-
 
 # ---------------------------------------------------------------------------
 # Tab content functions
@@ -296,9 +303,6 @@ def _full_tab(layout, p, in_preview):
     _draw_action_buttons(layout, p, in_preview)
 
     layout.separator()
-
-    if in_preview:
-        layout.label(text="Some options are locked during preview.", icon='INFO')
 
     if _collapsible(layout, p, 'show_advanced'):
         _section(layout, p, 'show_fit_settings',          _draw_fit_settings,          p, in_preview)
@@ -317,9 +321,6 @@ def _exclusive_tab(layout, p, in_preview):
     _draw_action_buttons(layout, p, in_preview)
 
     layout.separator()
-
-    if in_preview:
-        layout.label(text="Some options are locked during preview.", icon='INFO')
 
     if _collapsible(layout, p, 'show_advanced'):
         _section(layout, p, 'show_fit_settings',           _draw_fit_settings,          p, in_preview)

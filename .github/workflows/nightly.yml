@@ -49,17 +49,19 @@ jobs:
       - name: Build and test
         run: |
           BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
-          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
+          touch elastic_fit/_nightly
+          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build --nightly
+          rm -f elastic_fit/_nightly
 
       - name: Publish rolling nightly release
         if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ZIP=$(ls ElasticClothingFit-v*.zip | head -1)
+          ZIP=$(ls ElasticClothingFit-v*-nightly-*.zip | head -1)
           gh release delete nightly --yes 2>/dev/null || true
           git push origin :refs/tags/nightly 2>/dev/null || true
-          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability. \n\nAuto-built from `dev-UX-Tuning` @ %s\n\nRun: https://github.com/%s/actions/runs/%s' \
+          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability. \n\nAuto-built from `dev-UX-Tuning` @ %s\n\nRun: https://github.com/%s/actions/runs/%s\n\nBLENDER_MIN=3.0.0' \
             '${{ github.sha }}' '${{ github.repository }}' '${{ github.run_id }}')
           gh release create nightly "$ZIP" \
             --title "Nightly Dev Build $(date -u '+%Y-%m-%d')" \

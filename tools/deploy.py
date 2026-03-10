@@ -7,6 +7,7 @@ Usage:
     python tools/deploy.py select [--zip <path>] [--blender <exe>] [--skip-test]
 """
 import argparse
+import datetime
 import glob
 import os
 import pathlib
@@ -26,6 +27,7 @@ _INIT_PY = _ADDON_DIR / "__init__.py"
 _TESTS_DIR = _ROOT / "tests"
 _PHASE1_SCRIPT = _TESTS_DIR / "test_deployment_phase1.py"
 _PHASE2_SCRIPT = _TESTS_DIR / "test_deployment_phase2.py"
+_UNINSTALL_SCRIPT = _TESTS_DIR / "test_deployment_uninstall.py"
 _INSTALL_SCRIPT = _TESTS_DIR / "test_deployment_install.py"
 
 # ---------------------------------------------------------------------------
@@ -133,13 +135,18 @@ def _find_blender(cli_override=None):
 # Zip building
 # ---------------------------------------------------------------------------
 
-def _build_zip(version):
+def _build_zip(version, nightly=False):
     """
-    Build ElasticClothingFit-vX.Y.Z.zip from the elastic_fit/ directory.
+    Build the release zip from the elastic_fit/ directory.
     Excludes .pyc files and __pycache__ directories.
+    When nightly=True the zip is named with a date suffix.
     Returns the zip path as a pathlib.Path.
     """
-    zip_name = f"ElasticClothingFit-v{version}.zip"
+    if nightly:
+        today = datetime.date.today().strftime('%Y%m%d')
+        zip_name = f"ElasticClothingFit-v{version}-nightly-{today}.zip"
+    else:
+        zip_name = f"ElasticClothingFit-v{version}.zip"
     zip_path = _ROOT / zip_name
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in _ADDON_DIR.rglob("*"):
@@ -156,10 +163,13 @@ def _build_zip(version):
 def _run_phase(blender, script, zip_path):
     """
     Run one Blender background test phase.
+    --factory-startup prevents user addons (including MCP servers) from loading,
+    which avoids port conflicts with a running interactive Blender session.
     Returns (returncode, combined_stdout_stderr).
     """
     result = subprocess.run(
-        [blender, "--background", "--python", str(script), "--", "--zip", str(zip_path)],
+        [blender, "--background", "--factory-startup",
+         "--python", str(script), "--", "--zip", str(zip_path)],
         capture_output=True,
         text=True,
     )
@@ -213,28 +223,63 @@ def _run_tests(blender, zip_path):
 
 
 def _run_install(blender, zip_path):
-    """Run the install phase, leaving the addon enabled in Blender."""
+    """Uninstall any existing addon, then reinstall from zip and leave it enabled."""
     print(f"\nBlender : {blender}")
     print(f"Zip     : {zip_path}")
 
-    print("\n--- INSTALL ---")
-    _rc, out = _run_phase(blender, _INSTALL_SCRIPT, zip_path)
-    print(out)
-    r = _parse_results(out)
+    # UNINSTALL: --factory-startup so user addons (incl. MCP) never load.
+    # The uninstall script only needs to delete files, not touch prefs.
+    print("\n--- UNINSTALL ---")
+    result_u = subprocess.run(
+        [blender, "--background", "--factory-startup",
+         "--python", str(_UNINSTALL_SCRIPT)],
+        capture_output=True,
+        text=True,
+    )
+    out_u = result_u.stdout + result_u.stderr
+    print(out_u)
+    r_u = _parse_results(out_u)
 
-    total = len(r["passed"]) + len(r["failed"])
+    # INSTALL: user prefs needed so the enable persists.
+    # Disable any MCP addons via --python-expr before the install script runs,
+    # preventing port conflicts with a running interactive Blender session.
+    _mcp_disable = (
+        "import bpy\n"
+        "[bpy.ops.preferences.addon_disable(module=k) "
+        "for k in list(bpy.context.preferences.addons.keys()) "
+        "if 'mcp' in k.lower()]"
+    )
+    print("\n--- INSTALL ---")
+    result_i = subprocess.run(
+        [blender, "--background",
+         "--python-expr", _mcp_disable,
+         "--python", str(_INSTALL_SCRIPT), "--", "--zip", str(zip_path)],
+        capture_output=True,
+        text=True,
+    )
+    out_i = result_i.stdout + result_i.stderr
+    print(out_i)
+    r_i = _parse_results(out_i)
+
+    total_u = len(r_u["passed"]) + len(r_u["failed"])
+    total_i = len(r_i["passed"]) + len(r_i["failed"])
     print("\n" + "=" * 52)
     print(f"  {'Phase':<10} {'Tests':<8} {'Passed':<8} {'Failed'}")
     print("  " + "-" * 48)
-    print(f"  {'INSTALL':<10} {total:<8} {len(r['passed']):<8} {len(r['failed'])}")
+    print(f"  {'UNINSTALL':<10} {total_u:<8} {len(r_u['passed']):<8} {len(r_u['failed'])}")
+    print(f"  {'INSTALL':<10} {total_i:<8} {len(r_i['passed']):<8} {len(r_i['failed'])}")
     print("=" * 52)
 
-    if r["failed"]:
+    all_failed = (
+        [("UNINSTALL", line) for line in r_u["failed"]]
+        + [("INSTALL",   line) for line in r_i["failed"]]
+    )
+    if all_failed:
         print("\nFailed tests:")
-        for line in r["failed"]:
-            print(f"  [INSTALL] {line}")
+        for phase, line in all_failed:
+            print(f"  [{phase}] {line}")
 
-    return 0 if not r["failed"] else 1
+    return 0 if not all_failed else 1
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +289,8 @@ def _run_install(blender, zip_path):
 def cmd_build(args):
     """build subcommand: read version, create zip, run deployment test."""
     version = _read_version()
-    zip_path = _build_zip(version)
+    nightly = getattr(args, 'nightly', False)
+    zip_path = _build_zip(version, nightly=nightly)
     print(f"Built: {zip_path}")
 
     if args.skip_test:
@@ -342,6 +388,10 @@ def main():
     build_p.add_argument(
         "--skip-test", action="store_true", dest="skip_test",
         help="Build zip only, skip deployment test"
+    )
+    build_p.add_argument(
+        "--nightly", action="store_true",
+        help="Name zip with nightly date suffix (ElasticClothingFit-vX.Y.Z-nightly-YYYYMMDD.zip)"
     )
 
     select_p = sub.add_parser("select", help="Select an existing zip and run deployment test")
