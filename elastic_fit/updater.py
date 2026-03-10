@@ -104,7 +104,7 @@ NIGHTLY_URL = (
     "https://api.github.com/repos/VRC-Staples/Elastic-Clothing-Fit/releases/tags/nightly"
 )
 
-_NIGHTLY_MARKER = os.path.join(os.path.dirname(__file__), "_nightly")
+_NIGHTLY_MARKER = os.path.join(os.path.dirname(__file__), "_nightly.txt")
 
 _VALID_DOWNLOAD_DOMAINS = (
     'https://github.com/',

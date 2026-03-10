@@ -49,9 +49,7 @@ jobs:
       - name: Build and test
         run: |
           BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
-          touch elastic_fit/_nightly
           xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build --nightly
-          rm -f elastic_fit/_nightly
 
       - name: Publish rolling nightly release
         if: success()
