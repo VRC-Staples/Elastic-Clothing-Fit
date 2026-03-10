@@ -112,7 +112,7 @@ _VALID_DOWNLOAD_DOMAINS = (
     'https://github-releases.githubusercontent.com/',
 )
 
-_NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{8})\.zip$")
+_NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{12})\.zip$")
 
 
 def _installed_channel():
@@ -121,13 +121,25 @@ def _installed_channel():
 
 
 def _parse_nightly_asset(assets):
-    """Return (version_tuple, download_url) from a nightly release asset list."""
+    """Return (version_tuple, download_url, build_ts) from a nightly release asset list.
+
+    build_ts is the 12-digit YYYYMMDDHHMM string embedded in the filename.
+    """
     for asset in assets:
         m = _NIGHTLY_RE.search(asset.get('name', ''))
         if m:
             ver = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            return ver, asset['browser_download_url']
-    return None, None
+            return ver, asset['browser_download_url'], m.group(4)
+    return None, None, ''
+
+
+def _installed_nightly_ts():
+    """Return the build timestamp stored in _nightly.txt, or '' if absent."""
+    try:
+        with open(_NIGHTLY_MARKER, 'r', encoding='utf-8') as fh:
+            return fh.read().strip()
+    except Exception:
+        return ''
 
 
 def _parse_blender_min(body):
@@ -177,11 +189,12 @@ def _check_thread():
             use_nightly = False
 
         installed_channel = _installed_channel()
+        remote_ts = ''
 
         if use_nightly:
             data = _fetch(NIGHTLY_URL)
             assets = data.get('assets', [])
-            remote_version, zip_url = _parse_nightly_asset(assets)
+            remote_version, zip_url, remote_ts = _parse_nightly_asset(assets)
             if remote_version is None or not zip_url:
                 _state['status'] = 'error'
                 _state['error']  = 'No nightly zip asset found'
@@ -238,10 +251,13 @@ def _check_thread():
 
         # --- version comparison ---
         if use_nightly:
-            # When fetching nightly: same version nightly == up to date;
-            # higher remote nightly == available.
-            if installed_channel == 'nightly' and remote_version == current:
-                _state['status'] = 'up_to_date'
+            # When fetching nightly: compare semver first, then build timestamp
+            # so multiple nightlies on the same day are handled correctly.
+            if remote_version > current:
+                _state['status'] = 'available'
+            elif remote_version == current and installed_channel == 'nightly':
+                installed_ts = _installed_nightly_ts()
+                _state['status'] = 'available' if remote_ts > installed_ts else 'up_to_date'
             else:
                 _state['status'] = 'available' if remote_version >= current else 'up_to_date'
         else:

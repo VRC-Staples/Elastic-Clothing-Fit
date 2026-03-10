@@ -235,9 +235,13 @@ def _draw_update_tab(layout, context):
 
     # --- version header ---
     version_str = f"v{'.'.join(str(x) for x in bl_info['version'])}"
-    nightly_date = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
-    if nightly_date:
-        version_str += f"  (nightly dev {nightly_date})"
+    nightly_ts = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
+    if nightly_ts:
+        if len(nightly_ts) == 12 and nightly_ts.isdigit():
+            display_ts = f"{nightly_ts[:4]}-{nightly_ts[4:6]}-{nightly_ts[6:8]} {nightly_ts[8:10]}:{nightly_ts[10:12]}"
+        else:
+            display_ts = nightly_ts
+        version_str += f"  (nightly dev {display_ts})"
     split = layout.split(factor=0.4)
     split.label(text="Addon")
     split.label(text=version_str)
