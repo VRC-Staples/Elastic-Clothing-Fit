@@ -152,6 +152,8 @@ def _build_zip(version, nightly=False):
         for f in _ADDON_DIR.rglob("*"):
             if f.suffix == ".pyc" or "__pycache__" in f.parts:
                 continue
+            if f.name == "_dev_mode":
+                continue
             zf.write(f, f.relative_to(_ROOT))
         if nightly:
             ts = datetime.datetime.now().strftime('%Y%m%d%H%M')
