@@ -11,7 +11,7 @@ from mathutils.kdtree import KDTree
 from mathutils.bvhtree import BVHTree
 
 import bpy
-from bpy.props import IntProperty, StringProperty
+from bpy.props import IntProperty
 from bpy.types import Operator
 
 from . import state
@@ -953,20 +953,3 @@ class EFIT_OT_install_restart(Operator):
         return {'FINISHED'}
 
 
-class EFIT_OT_browse_local_zip(Operator):
-    """Open a file browser to choose a local zip for dev-mode installs."""
-    bl_idname      = "efit.browse_local_zip"
-    bl_label       = "Browse for Zip"
-    bl_description = "Choose a local zip file to use for dev-mode installation testing"
-    bl_options     = {'REGISTER'}
-
-    filepath: StringProperty(subtype='FILE_PATH')
-    filter_glob: StringProperty(default="*.zip", options={'HIDDEN'})
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {'RUNNING_MODAL'}
-
-    def execute(self, context):
-        context.scene.efit_props.dev_local_zip = self.filepath
-        return {'FINISHED'}

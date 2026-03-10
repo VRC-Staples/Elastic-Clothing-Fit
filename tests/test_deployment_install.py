@@ -8,6 +8,7 @@
 #
 # Prints [PASS] / [FAIL] lines to stdout.
 
+import os
 import sys
 
 import bpy
@@ -48,10 +49,11 @@ def _get_zip_path():
 
 ZIP_PATH = _get_zip_path()
 
-print("\n=== STEP 1: Verify addon not installed ===")
+print("\n=== STEP 1: Verify addon directory not present ===")
+_addon_dir = os.path.join(bpy.utils.user_resource("SCRIPTS", path="addons"), "elastic_fit")
 _assert_true(
-    "elastic_fit" not in bpy.context.preferences.addons,
-    "elastic_fit not in addons before install",
+    not os.path.isdir(_addon_dir),
+    "elastic_fit addon directory not present before install",
 )
 
 print("\n=== STEP 2: Install from zip ===")
@@ -78,5 +80,9 @@ _assert_true(
     hasattr(bpy.types, "SVRC_PT_elastic_fit"),
     "panel class registered",
 )
+
+print("\n=== STEP 5: Save preferences ===")
+bpy.ops.wm.save_userpref()
+print("  [PASS] preferences saved")
 
 print("\n=== INSTALL COMPLETE ===")
