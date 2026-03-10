@@ -112,7 +112,7 @@ _VALID_DOWNLOAD_DOMAINS = (
     'https://github-releases.githubusercontent.com/',
 )
 
-_NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{12})\.zip$")
+_NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{8,12})\.zip$")
 
 
 def _installed_channel():
