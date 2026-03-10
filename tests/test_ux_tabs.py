@@ -50,7 +50,6 @@ toggle_props = [
     "show_preserve_group",
     "show_displacement_smoothing",
     "show_offset_fine_tuning",
-    "show_post_fit",
     "show_misc",
 ]
 for prop in toggle_props:
