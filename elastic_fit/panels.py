@@ -12,9 +12,7 @@ from . import state
 from . import updater
 from .state import _has_blockers_cached, PANEL_CATEGORY
 
-# Populated at install time by the nightly build process.
 _nightly_path = pathlib.Path(__file__).parent / "_nightly.txt"
-_NIGHTLY_DATE = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
 
 
 def _wrap_text(text, max_chars=40, max_lines=3):
@@ -237,8 +235,9 @@ def _draw_update_tab(layout, context):
 
     # --- version header ---
     version_str = f"v{'.'.join(str(x) for x in bl_info['version'])}"
-    if _NIGHTLY_DATE:
-        version_str += f"  (nightly dev {_NIGHTLY_DATE})"
+    nightly_date = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
+    if nightly_date:
+        version_str += f"  (nightly dev {nightly_date})"
     split = layout.split(factor=0.4)
     split.label(text="Addon")
     split.label(text=version_str)
