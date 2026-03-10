@@ -413,7 +413,7 @@ class EFitProperties(PropertyGroup):
     # -- Update channel --
 
     use_nightly_channel: BoolProperty(
-        name="Nightly Dev Build",
+        name="Nightly Dev Build (Possibly Unstable)",
         description=(
             "Check for and install nightly development builds instead of stable releases. "
             "Nightly builds may contain bugs and instability."
