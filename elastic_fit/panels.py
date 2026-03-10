@@ -295,8 +295,8 @@ def _draw_update_tab(layout, context):
         else:
             warn       = layout.box()
             warn.alert = True
-            warn.label(text="File not saved - save manually", icon='ERROR')
-            warn.label(text="before restarting to keep your work.")
+            warn.label(text="Your .blend file is untitled and unsaved.", icon='ERROR')
+            warn.label(text="Save before restarting or lose work.")
         layout.operator("efit.install_restart",
                         text="Restart and Install", icon='LOOP_BACK')
 
