@@ -96,10 +96,24 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.efit_props = PointerProperty(type=EFitProperties)
     bpy.app.handlers.load_post.append(_efit_session_cleanup_on_load)
+
+    from .preview import (
+        _on_tab_change, _on_preview_prop_update, _on_smooth_mod_update,
+        _on_offset_group_influence_update, _on_offset_group_name_update,
+    )
+    state.register_handler('tab_change',                        _on_tab_change)
+    state.register_handler('preview_prop_update',               _on_preview_prop_update)
+    state.register_handler('smooth_mod_update',                 _on_smooth_mod_update)
+    state.register_handler('offset_group_influence_update',     _on_offset_group_influence_update)
+    state.register_handler('offset_group_name_update',          _on_offset_group_name_update)
+
     updater.check_for_update()
 
 
 def unregister():
+    for name in ('tab_change', 'preview_prop_update', 'smooth_mod_update',
+                 'offset_group_influence_update', 'offset_group_name_update'):
+        state.unregister_handler(name)
     if _efit_session_cleanup_on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_efit_session_cleanup_on_load)
     del bpy.types.Scene.efit_props
