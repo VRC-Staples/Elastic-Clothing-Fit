@@ -9,6 +9,7 @@ Usage:
 import argparse
 import datetime
 import glob
+import hashlib
 import os
 import pathlib
 import re
@@ -33,6 +34,15 @@ _INSTALL_SCRIPT = _TESTS_DIR / "test_deployment_install.py"
 # ---------------------------------------------------------------------------
 # Pure utility functions (unit-testable, no side effects)
 # ---------------------------------------------------------------------------
+
+def _sha256_file(path):
+    """Return the hex SHA-256 digest of a file."""
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
 
 def _parse_zip_version(filename):
     """Extract (major, minor, patch) from a string containing vX.Y.Z."""
@@ -304,7 +314,9 @@ def cmd_build(args):
     version = _read_version()
     nightly = getattr(args, 'nightly', False)
     zip_path = _build_zip(version, nightly=nightly)
+    digest   = _sha256_file(zip_path)
     print(f"Built: {zip_path}")
+    print(f"SHA256: {digest}")
 
     if args.skip_test:
         return 0
@@ -367,7 +379,9 @@ def cmd_install(args):
     """install subcommand: build zip and install addon into Blender, leaving it enabled."""
     version = _read_version()
     zip_path = _build_zip(version)
+    digest   = _sha256_file(zip_path)
     print(f"Built: {zip_path}")
+    print(f"SHA256: {digest}")
 
     blender = _find_blender(getattr(args, "blender", None))
     if not blender:

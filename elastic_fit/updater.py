@@ -4,6 +4,7 @@
 # background, writes a one-shot Blender startup script, then relaunches Blender
 # so the startup script can reinstall the add-on automatically.
 
+import hashlib
 import os
 import re
 import sys
@@ -30,6 +31,7 @@ _state = {
     'blender_min':        None,    # minimum blender version tuple required by remote release
     'blender_blocked':    False,   # True if installed Blender is below blender_min
     'blender_min_required': None,  # copy of blender_min for panel display
+    'expected_sha256':      None,  # hex SHA-256 parsed from release notes, or None
 }
 
 
@@ -120,6 +122,9 @@ _VALID_DOWNLOAD_DOMAINS = (
 )
 
 _NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{8,12})\.zip$")
+
+# Matches "SHA256: <64 hex chars>" anywhere in release notes body.
+_SHA256_RE = re.compile(r'\bSHA256:\s*([0-9a-fA-F]{64})\b')
 
 
 def _installed_channel():
@@ -259,6 +264,12 @@ def _check_thread():
             _schedule_redraw()
             return
 
+        # Parse optional SHA-256 from release notes ("SHA256: <64 hex chars>").
+        # Stored for post-download verification; None means no hash available.
+        body = data.get('body', '') or ''
+        sha256_match = _SHA256_RE.search(body)
+        _state['expected_sha256'] = sha256_match.group(1).lower() if sha256_match else None
+
         _state['tag']     = tag_name
         _state['version'] = remote_version
         _state['url']     = zip_url
@@ -357,6 +368,26 @@ def _download_thread():
                 _schedule_redraw()
 
         resp.close()
+
+        # Verify SHA-256 if the release notes contained one.
+        expected = _state.get('expected_sha256')
+        if expected:
+            h = hashlib.sha256()
+            with open(zip_path, 'rb') as fh:
+                for chunk in iter(lambda: fh.read(65536), b''):
+                    h.update(chunk)
+            if h.hexdigest() != expected:
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+                _state['status'] = 'error'
+                _state['error']  = 'SHA-256 mismatch -- download may be corrupt'
+                _schedule_redraw()
+                return
+        else:
+            print("[elastic_fit updater] No SHA-256 in release notes, skipping verification")
+
         _state['zip_path'] = zip_path
         _state['status']   = 'ready'
         _state['progress'] = 1.0

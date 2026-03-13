@@ -240,6 +240,46 @@ def _apply_disp_smoothing(smoothed, fitted_indices, cloth_adj,
     return smoothed
 
 
+# ---------------------------------------------------------------------------
+# Callback registry -- decouples PropertyGroup update= callbacks from preview.py
+# ---------------------------------------------------------------------------
+
+_handlers = {}
+
+
+def register_handler(name, fn):
+    """Register a named update handler callable."""
+    _handlers[name] = fn
+
+
+def unregister_handler(name):
+    """Remove a named handler (called on addon unregister)."""
+    _handlers.pop(name, None)
+
+
+def call_handler(name, self, context):
+    """Invoke a registered handler by name. No-op if not yet registered."""
+    fn = _handlers.get(name)
+    if fn:
+        fn(self, context)
+
+
+def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
+    """Build a smoothed copy of displacements using current property slider values.
+
+    Wraps the initial dict copy and param extraction that both the fit pipeline
+    and the live preview share, so neither duplicates that setup.
+
+    Returns a new dict {vi: Vector} with smoothed displacements.
+    """
+    smoothed = {vi: displacements[vi].copy() for vi in fitted_indices}
+    return _apply_disp_smoothing(
+        smoothed, fitted_indices, cloth_adj,
+        p.disp_smooth_passes, p.disp_smooth_threshold,
+        p.disp_smooth_min, p.disp_smooth_max,
+    )
+
+
 def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
     """Return per-vertex weights for each offset group entry.
 

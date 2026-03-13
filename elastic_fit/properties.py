@@ -3,7 +3,8 @@
 # EFitExclusiveGroup is a single vertex group entry used in the EVGF exclusive groups list.
 # EFitOffsetGroup is a single vertex-group/influence pair used in a collection.
 # EFitProperties holds all user-facing settings for the add-on.
-# Update callbacks are imported from preview.py, which must be loaded first.
+# Update callbacks are routed through the state handler registry so this module
+# does not import from preview.py.
 
 import bpy
 from bpy.props import (
@@ -12,14 +13,25 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
+from . import state
 from .state import _mesh_poll
-from .preview import (
-    _on_preview_prop_update,
-    _on_smooth_mod_update,
-    _on_offset_group_influence_update,
-    _on_offset_group_name_update,
-    _on_tab_change,
-)
+
+# Shim lambdas that delegate to registered handlers at call time.
+# __init__.py registers the actual preview functions after all modules are loaded.
+def _on_tab_change(self, context):
+    state.call_handler('tab_change', self, context)
+
+def _on_preview_prop_update(self, context):
+    state.call_handler('preview_prop_update', self, context)
+
+def _on_smooth_mod_update(self, context):
+    state.call_handler('smooth_mod_update', self, context)
+
+def _on_offset_group_influence_update(self, context):
+    state.call_handler('offset_group_influence_update', self, context)
+
+def _on_offset_group_name_update(self, context):
+    state.call_handler('offset_group_name_update', self, context)
 
 # Module-level caches keep the enum item lists alive between Blender redraws.
 # Blender can GC the list returned from an items callback if nothing else holds a reference.

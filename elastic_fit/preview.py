@@ -55,16 +55,8 @@ def _efit_preview_update(context):
             adjusted_displacements[vi] = d
 
         # Re-run adaptive displacement smoothing with the current slider values.
-        smoothed = {vi: adjusted_displacements[vi].copy() for vi in fitted_indices}
-
-        ds_passes      = p.disp_smooth_passes
-        ds_thresh_mult = p.disp_smooth_threshold
-        ds_min         = p.disp_smooth_min
-        ds_max         = p.disp_smooth_max
-
-        smoothed = state._apply_disp_smoothing(
-            smoothed, fitted_indices, cloth_adj,
-            ds_passes, ds_thresh_mult, ds_min, ds_max)
+        smoothed = state._smooth_displacements(
+            adjusted_displacements, fitted_indices, cloth_adj, p)
 
         # Recompute proximity weights from cached distances so slider changes update live.
         proximity_weights = None
