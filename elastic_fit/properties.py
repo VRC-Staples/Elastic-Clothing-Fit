@@ -14,7 +14,7 @@ from bpy.props import (
 from bpy.types import PropertyGroup
 
 from . import state
-from .state import _mesh_poll
+from .state import _mesh_poll, _armature_poll
 
 # Shim lambdas that delegate to registered handlers at call time.
 # __init__.py registers the actual preview functions after all modules are loaded.
@@ -32,6 +32,21 @@ def _on_offset_group_influence_update(self, context):
 
 def _on_offset_group_name_update(self, context):
     state.call_handler('offset_group_name_update', self, context)
+
+def _on_show_merge_armatures(self, context):
+    # Auto-populate Base and To Merge pickers when section is first expanded.
+    if not self.show_merge_armatures or context is None:
+        return
+    if self.merge_source_armature is not None or self.merge_target_armature is not None:
+        return
+    armatures = sorted(
+        [o for o in context.scene.objects if o.type == 'ARMATURE'],
+        key=lambda o: o.name,
+    )
+    if len(armatures) >= 1:
+        self.merge_source_armature = armatures[0]
+    if len(armatures) >= 2:
+        self.merge_target_armature = armatures[1]
 
 # Module-level caches keep the enum item lists alive between Blender redraws.
 # Blender can GC the list returned from an items callback if nothing else holds a reference.
@@ -103,6 +118,16 @@ class EFitOffsetGroup(PropertyGroup):
     )
 
 
+class EFitArmatureEntry(PropertyGroup):
+    """A single armature entry for the display settings target list."""
+    armature: PointerProperty(
+        name="Armature",
+        type=bpy.types.Object,
+        poll=_armature_poll,
+        description="Armature to apply display settings to",
+    )
+
+
 class EFitProperties(PropertyGroup):
 
     # -- Tab and section collapse state --
@@ -113,6 +138,7 @@ class EFitProperties(PropertyGroup):
         items=[
             ('FULL',      "Full Mesh Fit", "Fit the entire clothing mesh to the body"),
             ('EXCLUSIVE', "Exclusive Fit", "Fit only selected vertex groups"),
+            ('TOOLS',     "Tools",         "Armature and mesh utilities"),
             ('UPDATE',    "Update",        "Check for and install updates"),
         ],
         default='FULL',
@@ -145,6 +171,63 @@ class EFitProperties(PropertyGroup):
     )
     show_misc: BoolProperty(
         name="Misc",
+        default=False,
+    )
+    show_armature_display: BoolProperty(
+        name="Armature Display",
+        default=False,
+    )
+    show_merge_armatures: BoolProperty(
+        name="Merge Armatures",
+        default=False,
+        update=_on_show_merge_armatures,
+    )
+
+    armature_display_targets: CollectionProperty(
+        name="Armature Display Targets",
+        type=EFitArmatureEntry,
+        description="Armatures to apply display settings to",
+    )
+
+    armature_display_type: EnumProperty(
+        name="Display As",
+        description="How the selected armature(s) are drawn in the viewport",
+        items=[
+            ('WIRE',       "Wire",       ""),
+            ('SOLID',      "Solid",      ""),
+            ('BBONE',      "B-Bone",     ""),
+            ('ENVELOPE',   "Envelope",   ""),
+            ('STICK',      "Stick",      ""),
+            ('OCTAHEDRAL', "Octahedral", ""),
+        ],
+        default='STICK',
+    )
+    armature_show_in_front: BoolProperty(
+        name="In Front",
+        description="Draw the armature in front of other objects",
+        default=False,
+    )
+
+    merge_source_armature: PointerProperty(
+        name="Base",
+        type=bpy.types.Object,
+        poll=_armature_poll,
+        description="Base armature that stays after the merge",
+    )
+    merge_target_armature: PointerProperty(
+        name="To Merge",
+        type=bpy.types.Object,
+        poll=_armature_poll,
+        description="Armature to merge into the base",
+    )
+    merge_bones: BoolProperty(
+        name="Merge Bones",
+        description="Combine all bones into a single armature",
+        default=True,
+    )
+    merge_align_first: BoolProperty(
+        name="Align Before Merge",
+        description="Scale and translate source armature to match target before merging",
         default=False,
     )
 

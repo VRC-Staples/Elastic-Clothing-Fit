@@ -250,38 +250,36 @@ def _run_install(blender, zip_path):
     print(f"\nBlender : {blender}")
     print(f"Zip     : {zip_path}")
 
-    # UNINSTALL: --factory-startup so user addons (incl. MCP) never load.
-    # The uninstall script only needs to delete files, not touch prefs.
+    # UNINSTALL: load user prefs so the addon can be properly disabled in
+    # preferences before its files are deleted. This prevents the INSTALL
+    # step from encountering a startup ImportError for elastic_fit.
     print("\n--- UNINSTALL ---")
     result_u = subprocess.run(
-        [blender, "--background", "--factory-startup",
+        [blender, "--background",
          "--python", str(_UNINSTALL_SCRIPT)],
         capture_output=True,
         text=True,
     )
     out_u = result_u.stdout + result_u.stderr
     print(out_u)
+    if result_u.returncode != 0:
+        print(f"  [FAIL] Uninstall subprocess exited with code {result_u.returncode}")
     r_u = _parse_results(out_u)
 
-    # INSTALL: user prefs needed so the enable persists.
-    # Disable any MCP addons via --python-expr before the install script runs,
-    # preventing port conflicts with a running interactive Blender session.
-    _mcp_disable = (
-        "import bpy\n"
-        "[bpy.ops.preferences.addon_disable(module=k) "
-        "for k in list(bpy.context.preferences.addons.keys()) "
-        "if 'mcp' in k.lower()]"
-    )
+    # INSTALL: elastic_fit is now cleanly absent from both files and prefs,
+    # so no --python-expr MCP workaround is needed. User prefs still load
+    # normally so wm.save_userpref() persists the addon enable.
     print("\n--- INSTALL ---")
     result_i = subprocess.run(
         [blender, "--background",
-         "--python-expr", _mcp_disable,
          "--python", str(_INSTALL_SCRIPT), "--", "--zip", str(zip_path)],
         capture_output=True,
         text=True,
     )
     out_i = result_i.stdout + result_i.stderr
     print(out_i)
+    if result_i.returncode != 0:
+        print(f"  [FAIL] Install subprocess exited with code {result_i.returncode}")
     r_i = _parse_results(out_i)
 
     total_u = len(r_u["passed"]) + len(r_u["failed"])
@@ -302,7 +300,14 @@ def _run_install(blender, zip_path):
         for phase, line in all_failed:
             print(f"  [{phase}] {line}")
 
-    return 0 if not all_failed else 1
+    ok = (
+        result_u.returncode == 0
+        and result_i.returncode == 0
+        and not all_failed
+        and len(r_u["passed"]) >= 1
+        and len(r_i["passed"]) >= 1
+    )
+    return 0 if ok else 1
 
 
 # ---------------------------------------------------------------------------

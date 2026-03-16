@@ -41,6 +41,11 @@ def _mesh_poll(self, obj):
     return obj.type == 'MESH'
 
 
+def _armature_poll(self, obj):
+    """PointerProperty poll: restricts the eyedropper to armature objects only."""
+    return obj.type == 'ARMATURE'
+
+
 def _has_blockers(obj):
     """Return (has_shape_keys, [modifier_names]) for items that block fitting.
 

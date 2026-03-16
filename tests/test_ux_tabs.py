@@ -24,8 +24,8 @@ def _assert_equal(actual, expected, label):
 p = bpy.context.scene.efit_props
 
 print("\\n=== STEP 1: Verify defaults ===")
-_assert_equal(p.ui_tab,   'FULL', "ui_tab default is FULL")
-_assert_equal(p.fit_mode, 'FULL', "fit_mode default is FULL")
+_assert_equal(type(p).bl_rna.properties['ui_tab'].default,   'FULL', "ui_tab default is FULL")
+_assert_equal(type(p).bl_rna.properties['fit_mode'].default, 'FULL', "fit_mode default is FULL")
 
 print("\\n=== STEP 2: Switch to EXCLUSIVE tab ===")
 p.ui_tab = 'EXCLUSIVE'

@@ -1,11 +1,11 @@
 # tests/test_deployment_uninstall.py
 #
-# Deployment uninstall: remove elastic_fit addon directory if present.
-# Runs with --factory-startup so no user addons (including MCP servers) load.
-# Only file operations are needed -- prefs are not touched.
+# Deployment uninstall: disable elastic_fit in preferences and remove its
+# addon directory. Runs WITHOUT --factory-startup so user preferences are
+# loaded and can be properly cleared before the directory is deleted.
 #
 # Run via:
-#   blender --background --factory-startup --python tests/test_deployment_uninstall.py
+#   blender --background --python tests/test_deployment_uninstall.py
 #
 # Prints [PASS] / [FAIL] lines to stdout.
 
@@ -21,7 +21,18 @@ def _assert_true(condition, label):
     return condition
 
 
-print("\n=== STEP 1: Remove addon directory ===")
+print("\n=== STEP 1: Disable addon in preferences ===")
+if "elastic_fit" in bpy.context.preferences.addons:
+    bpy.ops.preferences.addon_disable(module="elastic_fit")
+    bpy.ops.wm.save_userpref()
+    _assert_true(
+        "elastic_fit" not in bpy.context.preferences.addons,
+        "elastic_fit disabled in preferences",
+    )
+else:
+    print("  [PASS] elastic_fit not enabled in preferences (already clean)")
+
+print("\n=== STEP 2: Remove addon directory ===")
 user_addons = bpy.utils.user_resource("SCRIPTS", path="addons")
 addon_dir = os.path.join(user_addons, "elastic_fit")
 if os.path.isdir(addon_dir):

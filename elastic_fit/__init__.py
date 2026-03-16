@@ -34,7 +34,7 @@ bl_info = {
 import bpy
 from bpy.props import PointerProperty
 
-from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProperties
+from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitArmatureEntry, EFitProperties
 
 
 from .operators import (
@@ -52,20 +52,49 @@ from .operators import (
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
 )
+from .armature_ops import (
+    EFIT_OT_armature_display,
+    EFIT_OT_armature_display_add,
+    EFIT_OT_armature_display_remove,
+    EFIT_OT_merge_armatures,
+)
 from .panels import SVRC_PT_elastic_fit
 from . import state
 from . import updater
 
 
+_PANEL_TOGGLES = (
+    'show_fit_settings',
+    'show_shape_preservation',
+    'show_preserve_group',
+    'show_proximity_falloff',
+    'show_displacement_smoothing',
+    'show_offset_fine_tuning',
+    'show_misc',
+    'show_armature_display',
+    'show_merge_armatures',
+    'show_advanced',
+)
+
+
+def _collapse_all_panels():
+    """Collapse every show_* panel toggle for all scenes."""
+    for scene in bpy.data.scenes:
+        p = scene.efit_props
+        for attr in _PANEL_TOGGLES:
+            setattr(p, attr, False)
+
+
 @bpy.app.handlers.persistent
 def _efit_session_cleanup_on_load(_):
-    """Clear in-memory caches when a new .blend file is loaded.
+    """Clear in-memory caches and collapse all UI panels when a .blend file loads.
 
     Prevents stale numpy arrays from previous sessions lingering in memory.
     Accessing cleared entries gracefully degrades (object lookups return None).
     """
     state._efit_cache.clear()
     state._efit_originals.clear()
+    _collapse_all_panels()
 
 
 # Registration order matters: PropertyGroups used as CollectionProperty types
@@ -73,6 +102,7 @@ def _efit_session_cleanup_on_load(_):
 _classes = (
     EFitExclusiveGroup,
     EFitOffsetGroup,
+    EFitArmatureEntry,
     EFitProperties,
     EFIT_OT_fit,
     EFIT_OT_preview_apply,
@@ -87,6 +117,10 @@ _classes = (
     EFIT_OT_check_update,
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
+    EFIT_OT_armature_display,
+    EFIT_OT_armature_display_add,
+    EFIT_OT_armature_display_remove,
+    EFIT_OT_merge_armatures,
     SVRC_PT_elastic_fit,
 )
 

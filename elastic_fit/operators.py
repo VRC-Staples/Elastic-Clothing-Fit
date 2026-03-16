@@ -58,6 +58,10 @@ class EFIT_OT_fit(Operator):
         cloth = p.clothing_obj
         body  = p.body_obj
 
+        # Expand the relevant settings panels so the user can review what was applied.
+        p.show_advanced      = True
+        p.show_fit_settings  = True
+
         # -- Validation --
         if not cloth or cloth.type != 'MESH':
             self.report({'ERROR'}, "Select a valid clothing mesh.")

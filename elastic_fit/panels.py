@@ -197,6 +197,38 @@ def _draw_misc(layout, p):
     layout.operator("efit.reset_defaults", icon='LOOP_BACK')
 
 
+def _draw_armature_display(layout, p):
+    for i, entry in enumerate(p.armature_display_targets):
+        row      = layout.row(align=True)
+        row.prop(entry, "armature", text="")
+        op       = row.operator("efit.armature_display_remove", text="", icon='REMOVE')
+        op.index = i
+    layout.operator("efit.armature_display_add", text="Add Armature", icon='ADD')
+    layout.separator()
+    col = layout.column(align=True)
+    col.prop(p, "armature_display_type")
+    col.prop(p, "armature_show_in_front")
+    layout.separator()
+    layout.operator("efit.armature_display", icon='ARMATURE_DATA')
+
+
+def _draw_merge_armatures(layout, p):
+    col = layout.column(align=True)
+    col.prop(p, "merge_source_armature", icon='ARMATURE_DATA')
+    col.prop(p, "merge_target_armature", icon='ARMATURE_DATA')
+    layout.separator()
+    col = layout.column(align=True)
+    col.prop(p, "merge_bones")
+    col.prop(p, "merge_align_first")
+    layout.separator()
+    layout.operator("efit.merge_armatures", icon='CONSTRAINT_BONE')
+
+
+def _tools_tab(layout, p):
+    _section(layout, p, 'show_armature_display', _draw_armature_display, p)
+    _section(layout, p, 'show_merge_armatures',  _draw_merge_armatures,  p)
+
+
 def _draw_exclusive_groups(layout, p, in_preview):
     sub = layout.box()
     sub.label(text="Groups to Fit", icon='GROUP_VERTEX')
@@ -368,5 +400,7 @@ class SVRC_PT_elastic_fit(Panel):
             _full_tab(layout, p, in_preview)
         elif p.ui_tab == 'EXCLUSIVE':
             _exclusive_tab(layout, p, in_preview)
+        elif p.ui_tab == 'TOOLS':
+            _tools_tab(layout, p)
         elif p.ui_tab == 'UPDATE':
             _draw_update_tab(layout, context)
