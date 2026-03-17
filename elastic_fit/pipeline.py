@@ -8,6 +8,7 @@ import mathutils
 from mathutils.kdtree import KDTree
 from mathutils.bvhtree import BVHTree
 
+import bmesh
 import bpy
 
 from . import state
@@ -67,6 +68,57 @@ def _efit_create_proxy(context, cloth, p):
 
     actual_tris = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
     return proxy, actual_tris, subdiv_levels
+
+
+def _efit_create_hull_proxy(context, body):
+    """Create a convex-hull proxy of the body mesh as a shrinkwrap target.
+
+    The convex hull fills concave regions (crotch, inner thigh, armpits) so
+    the shrinkwrap step cannot pull clothing vertices into those cavities.
+    The resulting object is a watertight convex mesh suitable as a shrinkwrap
+    target. No subdivision is applied -- resolution only needs to match the
+    body surface closely enough for the BVH to produce smooth displacements.
+
+    Returns the hull object on success, or None on failure.
+    The caller is responsible for removing the object when the fit completes.
+    """
+    # Duplicate the body so we work on a clean copy with modifiers stripped.
+    bpy.ops.object.select_all(action='DESELECT')
+    body.select_set(True)
+    context.view_layer.objects.active = body
+    if 'FINISHED' not in bpy.ops.object.duplicate(linked=False):
+        return None
+    hull_obj = context.active_object
+    if hull_obj is body:
+        return None
+    hull_obj.name = f"{EFIT_PREFIX}HullProxy"
+
+    # Strip modifiers so the hull is built from rest-pose geometry.
+    for m in list(hull_obj.modifiers):
+        hull_obj.modifiers.remove(m)
+
+    # Build the convex hull in-place using bmesh.
+    bm = bmesh.new()
+    bm.from_mesh(hull_obj.data)
+    result = bmesh.ops.convex_hull(bm, input=bm.verts)
+
+    # convex_hull tags geometry not part of the hull in result["geom_interior"]
+    # and result["geom_unused"]. Delete those so only hull faces remain.
+    interior = set(result.get("geom_interior", []))
+    unused   = set(result.get("geom_unused",   []))
+    to_delete = interior | unused
+    if to_delete:
+        bmesh.ops.delete(
+            bm,
+            geom=[g for g in to_delete if isinstance(g, bmesh.types.BMFace)],
+            context='FACES',
+        )
+
+    bm.to_mesh(hull_obj.data)
+    bm.free()
+    hull_obj.data.update()
+
+    return hull_obj
 
 
 def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):

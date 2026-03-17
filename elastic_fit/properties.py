@@ -182,6 +182,14 @@ class EFitProperties(PropertyGroup):
         default=False,
         update=_on_show_merge_armatures,
     )
+    show_mesh_split: BoolProperty(
+        name="Mesh Split",
+        default=False,
+    )
+    show_mesh_join: BoolProperty(
+        name="Mesh Join",
+        default=False,
+    )
 
     armature_display_targets: CollectionProperty(
         name="Armature Display Targets",
@@ -229,6 +237,38 @@ class EFitProperties(PropertyGroup):
         name="Align Before Merge",
         description="Scale and translate source armature to match target before merging",
         default=False,
+    )
+
+    # -- Mesh split / join tool properties --
+
+    mesh_split_mode: EnumProperty(
+        name="Split By",
+        description="How to separate the mesh into multiple objects",
+        items=[
+            ('LOOSE_PARTS',    "Loose Parts",    "One object per disconnected mesh island"),
+            ('BY_MATERIAL',    "By Material",    "One object per material slot"),
+            ('BY_VERTEX_GROUP',"By Vertex Group","One object for the named group, one for the rest"),
+        ],
+        default='LOOSE_PARTS',
+    )
+    mesh_split_group: StringProperty(
+        name="Vertex Group",
+        description="Vertex group to split out (used when Split By is set to By Vertex Group)",
+        default="",
+    )
+    mesh_join_merge: BoolProperty(
+        name="Merge by Distance",
+        description="After joining, merge vertices within the distance threshold",
+        default=False,
+    )
+    mesh_join_threshold: FloatProperty(
+        name="Merge Distance",
+        description="Vertices closer than this distance are merged after joining",
+        default=0.001,
+        min=0.0,
+        max=0.1,
+        precision=4,
+        subtype='DISTANCE',
     )
 
     body_obj: PointerProperty(
@@ -294,6 +334,17 @@ class EFitProperties(PropertyGroup):
         name="Preserve UVs",
         description="Keep UVs unchanged after fitting. Recommended for most workflows.",
         default=True,
+    )
+
+    use_proxy_hull: BoolProperty(
+        name="Hull Fit",
+        description=(
+            "Build a convex-hull proxy of the body before fitting. "
+            "Fills concave regions like the crotch and inner thigh so clothing "
+            "conforms to the body center instead of being pulled toward individual legs. "
+            "Disable if it degrades results on your specific mesh."
+        ),
+        default=False,
     )
 
     smooth_factor: FloatProperty(

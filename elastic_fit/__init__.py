@@ -58,6 +58,10 @@ from .armature_ops import (
     EFIT_OT_armature_display_remove,
     EFIT_OT_merge_armatures,
 )
+from .mesh_ops import (
+    EFIT_OT_mesh_split,
+    EFIT_OT_mesh_join,
+)
 from .panels import SVRC_PT_elastic_fit
 from . import state
 from . import updater
@@ -73,6 +77,8 @@ _PANEL_TOGGLES = (
     'show_misc',
     'show_armature_display',
     'show_merge_armatures',
+    'show_mesh_split',
+    'show_mesh_join',
     'show_advanced',
 )
 
@@ -121,8 +127,57 @@ _classes = (
     EFIT_OT_armature_display_add,
     EFIT_OT_armature_display_remove,
     EFIT_OT_merge_armatures,
+    EFIT_OT_mesh_split,
+    EFIT_OT_mesh_join,
     SVRC_PT_elastic_fit,
 )
+
+
+def _efit_start_mcp_server():
+    """Deferred callback: start the blender-mcp socket server if not already running.
+
+    Called via bpy.app.timers shortly after addon registration so the Blender
+    session is fully initialised before we touch the server object. Silently
+    skips if the blender-mcp addon is not installed.
+
+    Returns None to tell the timer system not to reschedule.
+    """
+    try:
+        # The blender-mcp addon stores its server instance on bpy.types.
+        # If the attribute does not exist the addon is not installed -- skip.
+        server = getattr(bpy.types, 'blendermcp_server', None)
+        if server is None:
+            # Addon not installed or not yet registered -- create the instance.
+            # BlenderMCPServer is defined in the blender-mcp addon module.
+            # Attempt to reach it via the registered operator's module.
+            try:
+                import addon_utils
+                for mod in addon_utils.modules():
+                    if getattr(mod, 'bl_info', {}).get('name', '').lower().startswith('blender mcp'):
+                        BlenderMCPServer = getattr(mod, 'BlenderMCPServer', None)
+                        if BlenderMCPServer:
+                            bpy.types.blendermcp_server = BlenderMCPServer(port=9876)
+                            server = bpy.types.blendermcp_server
+                            break
+            except Exception:
+                pass
+
+        if server is None:
+            # blender-mcp not available -- nothing to start.
+            return None
+
+        if not server.running:
+            server.start()
+            # Mirror the scene flag the blender-mcp UI panel reads.
+            for scene in bpy.data.scenes:
+                if hasattr(scene, 'blendermcp_server_running'):
+                    scene.blendermcp_server_running = True
+
+    except Exception as e:
+        # Never let this crash Blender -- it is best-effort.
+        print(f"[ECF] MCP server auto-start skipped: {e}")
+
+    return None  # do not reschedule
 
 
 def register():
@@ -142,6 +197,10 @@ def register():
     state.register_handler('offset_group_name_update',          _on_offset_group_name_update)
 
     updater.check_for_update()
+
+    # Start the blender-mcp socket server after a short delay so the session
+    # is fully ready. 0.5 s is enough for Blender's startup sequence to finish.
+    bpy.app.timers.register(_efit_start_mcp_server, first_interval=0.5)
 
 
 def unregister():

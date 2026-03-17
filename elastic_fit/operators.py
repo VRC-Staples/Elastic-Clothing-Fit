@@ -22,6 +22,7 @@ from .pipeline import (
     _efit_save_originals, _efit_create_proxy, _efit_classify_vertices,
     _efit_shrinkwrap_proxy, _efit_transfer_displacements, _efit_apply_smoothing,
     _efit_apply_offset_tuning, _efit_apply_preserve_follow,
+    _efit_create_hull_proxy,
 )
 
 
@@ -110,7 +111,7 @@ class EFIT_OT_fit(Operator):
                 del cloth["_efit_originals"]
             state._efit_originals.pop(cloth.name, None)
             for obj in list(bpy.data.objects):
-                if obj.name.startswith(f"{EFIT_PREFIX}Proxy"):
+                if obj.name.startswith(EFIT_PREFIX) and obj.type == 'MESH':
                     bpy.data.objects.remove(obj, do_unlink=True)
 
         # Resolve preserve group: check that the named vertex group actually exists.
@@ -138,10 +139,27 @@ class EFIT_OT_fit(Operator):
         fitted_indices, preserved_indices, has_preserve, preserve_name = \
             _efit_classify_vertices(cloth, p, has_preserve, preserve_name)
 
-        # -- Shrinkwrap proxy onto body --
+        # -- Optional: build a convex-hull proxy of the body as the shrinkwrap target.
+        # The hull fills concave regions (crotch, inner thigh) so the shrinkwrap
+        # cannot pull clothing vertices into cavities between legs. Disabled by
+        # default -- enable via the use_proxy_hull toggle in Fit Settings.
+        if p.use_proxy_hull:
+            hull_body = _efit_create_hull_proxy(context, body)
+            if hull_body is None:
+                self.report({'WARNING'}, "Could not create hull proxy, fitting against body directly.")
+                hull_body = body
+        else:
+            hull_body = body
+
+        # -- Shrinkwrap proxy onto body (or hull body) --
         proxy_pre, proxy_post = _efit_shrinkwrap_proxy(
-            context, proxy, body, all_originals,
+            context, proxy, hull_body, all_originals,
             fitted_indices, preserved_indices, has_preserve, p)
+
+        # Remove hull proxy immediately after shrinkwrap -- it is not needed downstream.
+        if p.use_proxy_hull and hull_body is not body:
+            bpy.data.objects.remove(hull_body, do_unlink=True)
+            hull_body = None
 
         # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
@@ -352,7 +370,7 @@ class EFIT_OT_remove(Operator):
         _remove_efit(cloth)
 
         for obj in list(bpy.data.objects):
-            if obj.name.startswith(f"{EFIT_PREFIX}Proxy"):
+            if obj.name.startswith(EFIT_PREFIX) and obj.type == 'MESH':
                 bpy.data.objects.remove(obj, do_unlink=True)
 
         self.report({'INFO'}, "Fit removed.")
@@ -417,7 +435,7 @@ class EFIT_OT_reset_defaults(Operator):
         p = context.scene.efit_props
         for prop_name in (
             'fit_mode', 'ui_tab',
-            'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs',
+            'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs', 'use_proxy_hull',
             'smooth_factor', 'smooth_iterations',
             'post_laplacian', 'laplacian_factor', 'laplacian_iterations',
             'follow_strength', 'cleanup',

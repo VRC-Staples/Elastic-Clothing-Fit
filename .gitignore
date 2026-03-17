@@ -8,3 +8,6 @@ wiki/
 docs/
 *.blend*
 elastic_fit/_dev_mode
+
+# ── GSD (local-only, commit_docs: false) ──
+.gsd/

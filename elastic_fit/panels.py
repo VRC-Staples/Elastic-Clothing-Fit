@@ -132,6 +132,9 @@ def _draw_fit_settings(layout, p, in_preview):
     row         = col.row()
     row.enabled = not in_preview
     row.prop(p, "preserve_uvs")
+    row         = col.row()
+    row.enabled = not in_preview
+    row.prop(p, "use_proxy_hull")
 
 
 def _draw_shape_preservation(layout, p):
@@ -224,9 +227,27 @@ def _draw_merge_armatures(layout, p):
     layout.operator("efit.merge_armatures", icon='CONSTRAINT_BONE')
 
 
+def _draw_mesh_split(layout, p):
+    layout.prop(p, "mesh_split_mode")
+    if p.mesh_split_mode == 'BY_VERTEX_GROUP':
+        layout.prop(p, "mesh_split_group", text="Group", icon='GROUP_VERTEX')
+    layout.separator()
+    layout.operator("efit.mesh_split", icon='MESH_DATA')
+
+
+def _draw_mesh_join(layout, p):
+    layout.prop(p, "mesh_join_merge")
+    if p.mesh_join_merge:
+        layout.prop(p, "mesh_join_threshold")
+    layout.separator()
+    layout.operator("efit.mesh_join", icon='OBJECT_DATA')
+
+
 def _tools_tab(layout, p):
     _section(layout, p, 'show_armature_display', _draw_armature_display, p)
     _section(layout, p, 'show_merge_armatures',  _draw_merge_armatures,  p)
+    _section(layout, p, 'show_mesh_split',        _draw_mesh_split,       p)
+    _section(layout, p, 'show_mesh_join',         _draw_mesh_join,        p)
 
 
 def _draw_exclusive_groups(layout, p, in_preview):
