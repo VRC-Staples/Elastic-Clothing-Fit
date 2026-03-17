@@ -8,9 +8,7 @@ wiki/
 docs/
 *.blend*
 elastic_fit/_dev_mode
-
-# ── GSD (local-only, commit_docs: false) ──
 .gsd/
-
-# ── Subagent runner artifacts ──
 artifacts/
+mock-update-server.ps1
+dev-install.ps1
