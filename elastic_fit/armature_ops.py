@@ -137,9 +137,17 @@ class EFIT_OT_merge_armatures(Operator):
         base  = p.merge_source_armature   # "Base" -- stays
 
         if p.merge_align_first:
-            ok, msg = _align_armature(donor, base)
-            if not ok:
-                self.report({'WARNING'}, f"Align skipped: {msg}")
+            # Skip alignment when there are fewer than 2 shared bone names --
+            # not enough correspondence to compute a meaningful alignment.
+            base_bone_names  = {b.name.lower() for b in base.data.bones}
+            donor_bone_names = {b.name.lower() for b in donor.data.bones}
+            shared_count = len(base_bone_names & donor_bone_names)
+            if shared_count < 2:
+                self.report({'WARNING'}, f"Align skipped: fewer than 2 shared bones ({shared_count})")
+            else:
+                ok, msg = _align_armature(donor, base)
+                if not ok:
+                    self.report({'WARNING'}, f"Align skipped: {msg}")
 
         if p.merge_bones:
             # bpy.ops.object.join() does not commit reliably when called from within

@@ -669,6 +669,11 @@ bpy.context.scene.collection.objects.link(unparented_mesh)
 
 bpy.context.view_layer.update()
 
+# Record world positions before merge so we can verify movement delta.
+parented_world_before  = mathutils.Vector(parented_mesh.matrix_world.translation)
+unparented_world_before = mathutils.Vector(unparented_mesh.matrix_world.translation)
+donor_world_before     = mathutils.Vector(donor_arm.matrix_world.translation)
+
 p = bpy.context.scene.efit_props
 p.merge_source_armature = base_arm
 p.merge_target_armature = donor_arm
@@ -677,6 +682,8 @@ p.merge_align_first     = True
 
 with bpy.context.temp_override(window=win, area=area):
     result = bpy.ops.efit.merge_armatures()
+
+bpy.context.view_layer.update()
 
 _assert_true(result == {"FINISHED"}, "STEP 8: merge returned FINISHED")
 
@@ -693,14 +700,22 @@ tgt_root_world = base_arm.matrix_world @ tgt_roots[0].head_local
 root_dist = (src_root_world - tgt_root_world).length
 _assert_true(root_dist < 0.01, f"STEP 8: root bones aligned (dist={root_dist:.4f})")
 
-# Parented mesh world position should be near base (using matrix_world, not .location).
-parented_world = parented_mesh.matrix_world.translation
-base_world = base_arm.matrix_world.translation
-parented_dist = (parented_world - base_world).length
-_assert_true(parented_dist < 1.0, f"STEP 8: parented mesh world pos near base (dist={parented_dist:.4f})")
+# Parented mesh world position should have shifted by the same delta as the donor
+# (it inherits the parent transform automatically -- no extra code needed).
+# donor_delta is how far the donor moved; the child should move by the same amount.
+bpy.context.view_layer.update()
+donor_world_after   = mathutils.Vector(donor_arm.matrix_world.translation)
+donor_delta         = donor_world_after - donor_world_before
+parented_world_after = mathutils.Vector(parented_mesh.matrix_world.translation)
+parented_delta       = parented_world_after - parented_world_before
+parented_delta_err   = (parented_delta - donor_delta).length
+_assert_true(parented_delta_err < 0.1,
+    f"STEP 8: parented mesh moved with donor (delta error={parented_delta_err:.4f})")
 
 # Unparented mesh should also have moved near base.
-unparented_world = unparented_mesh.matrix_world.translation
+# The operator explicitly translates unparented meshes that reference the donor via modifier.
+unparented_world = mathutils.Vector(unparented_mesh.matrix_world.translation)
+base_world = mathutils.Vector(base_arm.matrix_world.translation)
 unparented_dist = (unparented_world - base_world).length
 _assert_true(unparented_dist < 1.0, f"STEP 8: unparented mesh world pos near base (dist={unparented_dist:.4f})")
 
