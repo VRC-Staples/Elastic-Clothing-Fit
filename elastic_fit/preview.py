@@ -10,6 +10,7 @@ from mathutils.kdtree import KDTree
 import bpy
 
 from . import state
+from .properties import _resolve_vg_name
 
 
 def _efit_preview_update(context):
@@ -98,9 +99,10 @@ def _efit_preview_update(context):
         # Accumulate offset group deltas directly into co_buf (P3).
         if has_offset_work:
             for og in source_groups:
-                if not og.group_name:
+                og_name = _resolve_vg_name(og.group_name)
+                if not og_name:
                     continue
-                weights = offset_group_weights.get(og.group_name)
+                weights = offset_group_weights.get(og_name)
                 if not weights:
                     continue
                 # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)

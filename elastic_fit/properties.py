@@ -48,6 +48,11 @@ def _on_show_merge_armatures(self, context):
     if len(armatures) >= 2:
         self.merge_target_armature = armatures[1]
 
+# Sentinel value used as the enum identifier for the "no group selected" item.
+# Must be a non-empty string — Blender rejects empty identifiers in dynamic enums,
+# which causes "None not selectable" and index-drift (random group switching) bugs.
+_NONE_SENTINEL = "EFIT_NONE"
+
 # Module-level caches keep the enum item lists alive between Blender redraws.
 # Blender can GC the list returned from an items callback if nothing else holds a reference.
 _preserve_group_items_cache = []
@@ -58,7 +63,7 @@ def _preserve_group_items(self, context):
     # self is an EFitProperties instance; clothing_obj is accessible directly.
     # Reverses creation order so the most recently added group appears at the top.
     global _preserve_group_items_cache
-    items = [("", "None", "")]
+    items = [(_NONE_SENTINEL, "None", "No preserve group")]
     if self.clothing_obj and self.clothing_obj.type == 'MESH':
         for vg in reversed(self.clothing_obj.vertex_groups):
             items.append((vg.name, vg.name, ""))
@@ -71,7 +76,7 @@ def _group_name_items(self, context):
     # context may be None during undo/redo; guard before accessing it.
     # Reverses creation order so the most recently added group appears at the top.
     global _group_name_items_cache
-    items = [("", "None", "")]
+    items = [(_NONE_SENTINEL, "None", "No vertex group")]
     if context is not None:
         p = context.scene.efit_props
         if p.clothing_obj and p.clothing_obj.type == 'MESH':
@@ -79,6 +84,13 @@ def _group_name_items(self, context):
                 items.append((vg.name, vg.name, ""))
     _group_name_items_cache = items
     return items
+
+
+def _resolve_vg_name(value):
+    """Return the real vertex group name, or '' if the sentinel/empty is stored."""
+    if not value or value == _NONE_SENTINEL:
+        return ""
+    return value
 
 
 class EFitExclusiveGroup(PropertyGroup):

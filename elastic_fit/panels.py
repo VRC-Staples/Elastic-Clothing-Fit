@@ -11,6 +11,7 @@ from bpy.types import Panel
 from . import state
 from . import updater
 from .state import _has_blockers_cached, PANEL_CATEGORY
+from .properties import _resolve_vg_name
 
 _nightly_path = pathlib.Path(__file__).parent / "_nightly.txt"
 
@@ -153,7 +154,7 @@ def _draw_shape_preservation(layout, p):
 def _draw_preserve_group(layout, p):
     if p.clothing_obj and p.clothing_obj.type == 'MESH':
         layout.prop(p, "preserve_group", text="Group")
-        if p.preserve_group:
+        if _resolve_vg_name(p.preserve_group):
             col = layout.column(align=True)
             col.prop(p, "follow_strength")
             col.prop(p, "follow_neighbors")

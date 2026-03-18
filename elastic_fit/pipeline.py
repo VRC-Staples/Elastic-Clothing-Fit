@@ -13,6 +13,7 @@ import bpy
 
 from . import state
 from .state import EFIT_PREFIX, _calc_subdivisions
+from .properties import _resolve_vg_name
 
 
 def _efit_save_originals(cloth):
@@ -136,9 +137,9 @@ def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):
         # Everything else is frozen in place; no follow step is needed.
         # Iterate v.groups to avoid try/except-as-flow-control overhead.
         target_vg_indices = {
-            cloth.vertex_groups[eg.group_name].index
+            cloth.vertex_groups[_resolve_vg_name(eg.group_name)].index
             for eg in p.exclusive_groups
-            if eg.group_name and cloth.vertex_groups.get(eg.group_name)
+            if _resolve_vg_name(eg.group_name) and cloth.vertex_groups.get(_resolve_vg_name(eg.group_name))
         }
         fitted_set = set()
         for v in cloth.data.vertices:
@@ -354,9 +355,10 @@ def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
     cloth.data.vertices.foreach_get("co", co_buf)
     changed = False
     for og in source_groups:
-        if not og.group_name:
+        og_name = _resolve_vg_name(og.group_name)
+        if not og_name:
             continue
-        og_weights = offset_group_weights.get(og.group_name)
+        og_weights = offset_group_weights.get(og_name)
         if not og_weights:
             continue
         # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)

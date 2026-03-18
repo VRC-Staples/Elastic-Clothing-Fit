@@ -295,9 +295,10 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
     fitted_set = set(fitted_indices)
     offset_group_weights = {}
     for og in offset_groups:
-        if not og.group_name:
+        og_name = og.group_name if og.group_name and og.group_name != "EFIT_NONE" else ""
+        if not og_name:
             continue
-        vg = cloth.vertex_groups.get(og.group_name)
+        vg = cloth.vertex_groups.get(og_name)
         if vg is None:
             continue
         vg_idx  = vg.index
@@ -310,5 +311,5 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
                     weights[v.index] = g.weight
                     break
         if weights:
-            offset_group_weights[og.group_name] = weights
+            offset_group_weights[og_name] = weights
     return offset_group_weights

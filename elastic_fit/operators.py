@@ -17,6 +17,7 @@ from .state import (
     _has_blockers,
     _save_uvs, _restore_uvs, _remove_efit,
 )
+from .properties import _resolve_vg_name
 from .preview import _efit_preview_update, _sync_preview_modifiers
 from .pipeline import (
     _efit_save_originals, _efit_create_proxy, _efit_classify_vertices,
@@ -43,7 +44,7 @@ class EFIT_OT_fit(Operator):
         if p.fit_mode == 'EXCLUSIVE':
             cloth = p.clothing_obj
             has_valid = any(
-                eg.group_name and cloth.vertex_groups.get(eg.group_name)
+                _resolve_vg_name(eg.group_name) and cloth.vertex_groups.get(_resolve_vg_name(eg.group_name))
                 for eg in p.exclusive_groups
             )
             if not has_valid:
@@ -87,7 +88,7 @@ class EFIT_OT_fit(Operator):
 
         if p.fit_mode == 'EXCLUSIVE':
             valid_groups = [eg for eg in p.exclusive_groups
-                            if eg.group_name and cloth.vertex_groups.get(eg.group_name)]
+                            if _resolve_vg_name(eg.group_name) and cloth.vertex_groups.get(_resolve_vg_name(eg.group_name))]
             if not valid_groups:
                 self.report({'ERROR'},
                             "Exclusive Vertex Group Fit requires at least one group in the "
@@ -115,7 +116,7 @@ class EFIT_OT_fit(Operator):
                     bpy.data.objects.remove(obj, do_unlink=True)
 
         # Resolve preserve group: check that the named vertex group actually exists.
-        preserve_name = (p.preserve_group or "").strip()
+        preserve_name = _resolve_vg_name(p.preserve_group)
         has_preserve  = bool(preserve_name and cloth.vertex_groups.get(preserve_name))
 
         if preserve_name and not cloth.vertex_groups.get(preserve_name):
