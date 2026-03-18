@@ -19,12 +19,18 @@ def _get_view3d_context(context):
 
 
 def _merge_by_distance(threshold):
-    """Call merge-by-distance in Edit mode. Handles Blender 3.x and 4.x+ API names."""
-    # bpy.ops.mesh.remove_doubles was renamed to merge_by_distance in Blender 4.0.
-    if hasattr(bpy.ops.mesh, 'merge_by_distance'):
-        bpy.ops.mesh.merge_by_distance(threshold=threshold)
-    else:
-        bpy.ops.mesh.remove_doubles(threshold=threshold)
+    """Merge coincident vertices within threshold using bmesh directly.
+
+    Uses bmesh.ops.remove_doubles which works reliably across Blender versions
+    without requiring an operator context or Edit mode.
+    """
+    import bmesh as _bmesh
+    obj = bpy.context.view_layer.objects.active
+    if obj is None or obj.type != 'MESH':
+        return
+    bm = _bmesh.from_edit_mesh(obj.data)
+    _bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=threshold)
+    _bmesh.update_edit_mesh(obj.data)
 
 
 class EFIT_OT_mesh_split(Operator):

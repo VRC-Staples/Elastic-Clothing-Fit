@@ -221,7 +221,7 @@ _assert_equal(count_after, count_before + 1,
 
 # Poll should fail with empty group name.
 p.mesh_split_group = ""
-poll_result = bpy.ops.efit.mesh_split.poll(bpy.context)
+poll_result = bpy.ops.efit.mesh_split.poll()
 _assert_equal(poll_result, False, "mesh_split poll returns False when group name is empty")
 
 # Cleanup.

@@ -282,6 +282,14 @@ def _run_install(blender, zip_path):
         print(f"  [FAIL] Install subprocess exited with code {result_i.returncode}")
     r_i = _parse_results(out_i)
 
+    # Invalidate __pycache__ in the installed addon so Blender uses the fresh
+    # .py source on next reload rather than stale compiled bytecode.
+    import shutil as _shutil
+    addons_dir = pathlib.Path.home() / "AppData" / "Roaming" / "Blender Foundation" / "Blender"
+    for pyc_dir in addons_dir.glob("*/scripts/addons/elastic_fit/__pycache__"):
+        _shutil.rmtree(pyc_dir, ignore_errors=True)
+        print(f"  Cleared __pycache__: {pyc_dir}")
+
     total_u = len(r_u["passed"]) + len(r_u["failed"])
     total_i = len(r_i["passed"]) + len(r_i["failed"])
     print("\n" + "=" * 52)

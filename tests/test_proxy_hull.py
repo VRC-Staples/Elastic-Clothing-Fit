@@ -173,11 +173,11 @@ def _assert_true(condition, label):
 
 print("\\n=== STEP 4: hull produces different positions than no-hull ===")
 
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
-
 # Fit WITHOUT hull and record applied positions.
 bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+# Re-fetch window/area AFTER open_mainfile -- the previous screen objects are stale.
+_win  = bpy.context.window_manager.windows[0]
+_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
 p = bpy.context.scene.efit_props
 p.body_obj       = bpy.data.objects[BODY_NAME]
 p.clothing_obj   = bpy.data.objects[CLOTHING_NAME]
@@ -191,6 +191,9 @@ with bpy.context.temp_override(window=_win, area=_area):
 
 # Fit WITH hull and record applied positions.
 bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+# Re-fetch window/area AFTER open_mainfile -- the previous screen objects are stale.
+_win  = bpy.context.window_manager.windows[0]
+_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
 p = bpy.context.scene.efit_props
 p.body_obj       = bpy.data.objects[BODY_NAME]
 p.clothing_obj   = bpy.data.objects[CLOTHING_NAME]
