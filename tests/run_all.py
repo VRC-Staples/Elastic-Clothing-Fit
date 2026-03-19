@@ -29,7 +29,7 @@ SUITES = [
     ("UX Tabs",        "suite_ux_tabs.py",        False),
     ("Fit Pipeline",   "suite_fit_pipeline.py",   True),
     ("Proximity",      "suite_proximity.py",       True),
-    ("Armature Tools", "suite_armature_tools.py",  False),
+    ("Armature Tools", "suite_armature_tools.py",  True),
     ("Mesh Tools",     "suite_mesh_tools.py",      False),
     ("Proxy Hull",     "suite_proxy_hull.py",      True),
 ]

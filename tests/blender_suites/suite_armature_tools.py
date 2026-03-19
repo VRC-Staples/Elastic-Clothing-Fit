@@ -24,11 +24,11 @@ while _i < len(_argv):
     else:
         _i += 1
 
-# Resolve blend file path from --blend-root or fall back to absolute path
-if _blend_root:
-    BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test2.blend")
-else:
-    BLEND_PATH = r"C:\Users\Staples\Documents\GitHub\Elastic-Clothing-Fit\tests\ECF_Test2.blend"
+if _blend_root is None:
+    print("[ERROR] --blend-root <repo_root> is required")
+    sys.exit(1)
+
+BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test2.blend")
 
 # ---- failure counter ----
 _failed = 0
