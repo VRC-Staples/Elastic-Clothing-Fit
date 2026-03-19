@@ -4,7 +4,7 @@
 # REQUIRES: elastic_fit addon installed and enabled.
 #           test scene at tests/ECF_Test.blend (Body + Outfit objects).
 #
-# Run each STEP_* block via mcp__blender__execute_blender_code in order.
+# Run via: blender --background --python tests/test_proxy_hull.py
 
 BLEND_PATH    = r"C:\Users\Staples\Documents\GitHub\Elastic-Clothing-Fit\tests\ECF_Test.blend"
 BODY_NAME     = "Body"

@@ -5,7 +5,7 @@
 #           A VIEW_3D area must be open in Blender.
 #
 # Each STEP_* block creates its own test objects and cleans them up.
-# Run each block via mcp__blender__execute_blender_code in order.
+# Run via: blender --background --python tests/test_mesh_tools.py
 
 # ============================================================
 # STEP 1: Properties exist with correct defaults

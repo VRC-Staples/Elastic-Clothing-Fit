@@ -5,7 +5,7 @@
 #           No active preview (fresh scene or after cancel/apply).
 #           A VIEW_3D area must be open in Blender.
 #
-# Run each STEP_* block via mcp__blender__execute_blender_code in order.
+# Run via: blender --background --python tests/test_armature_tools.py
 # Steps are self-contained: each creates and destroys its own test objects.
 
 # ============================================================

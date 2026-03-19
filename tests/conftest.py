@@ -1,23 +1,17 @@
 # conftest.py
-# Shared assertion helpers for all Elastic Clothing Fit MCP test scripts.
+# Shared assertion helpers for Elastic Clothing Fit test scripts.
 #
-# HOW TESTS WORK
-# --------------
-# Claude Code is the test runner. Each test file contains Blender Python code
-# that is sent to Blender via mcp__blender__execute_blender_code. The code
-# prints PASS / FAIL lines and returns a result dict. Claude Code reads the
-# output and reports failures.
+# These helpers are used in two ways:
+#   1. Imported directly in pytest-compatible test modules.
+#   2. Pasted inline into Blender headless scripts via the HELPERS_INLINE constant.
 #
-# To run a test:
-#   1. Copy the code block from the relevant test file.
-#   2. Send it via mcp__blender__execute_blender_code.
-#   3. Check that all lines say PASS and no FAILs appear.
+# To run a headless Blender test:
+#   blender --background --python tests/test_<name>.py
 #
-# Import this module at the top of each test script via:
+# To import in a pytest module:
 #   import sys, os
 #   sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 #   from tests.conftest import assert_equal, assert_true, ...
-# OR paste the helpers inline when running inside Blender.
 
 
 def assert_true(condition, label):
@@ -57,7 +51,7 @@ def assert_all_in_range(mapping, lo, hi, label):
     return ok
 
 
-# Inline-paste version of the helpers for use inside mcp__blender__execute_blender_code calls.
+# Inline-paste version of the helpers for use inside Blender headless scripts.
 # Copy everything between the START/END markers.
 
 HELPERS_INLINE = '''

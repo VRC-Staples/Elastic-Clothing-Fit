@@ -4,7 +4,7 @@
 # REQUIRES: elastic_fit addon installed and enabled.
 #           No active preview (fresh scene or after cancel/apply).
 #
-# Run the single TEST_UX_TABS block via mcp__blender__execute_blender_code.
+# Run via: blender --background --python tests/test_ux_tabs.py
 
 TEST_UX_TABS = '''
 import bpy

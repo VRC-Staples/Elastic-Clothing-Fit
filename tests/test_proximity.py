@@ -6,7 +6,7 @@
 #   - A scene with body + clothing meshes already set on efit_props.
 #     (Run test_fit_pipeline STEP_1_TO_2 first to load a scene, or set manually.)
 #
-# Run each STEP_* block via mcp__blender__execute_blender_code in order.
+# Run via: blender --background --python tests/test_proximity.py
 
 # ============================================================
 # STEP 1-2: Enable falloff, run fit, verify distances cached

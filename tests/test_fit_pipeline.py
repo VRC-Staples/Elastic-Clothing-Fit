@@ -6,7 +6,7 @@
 #   - A .blend file with a known body mesh and clothing mesh.
 #     Set BLEND_PATH, BODY_NAME, CLOTHING_NAME below.
 #
-# Run each STEP_* block via mcp__blender__execute_blender_code in order.
+# Run via: blender --background --python tests/test_fit_pipeline.py
 
 BLEND_PATH    = r"C:\Users\Staples\Documents\GitHub\Elastic-Clothing-Fit\tests\ECF_Test.blend"
 BODY_NAME     = "Body"
