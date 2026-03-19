@@ -1,68 +1,67 @@
-# test_mesh_tools.py
-# Regression tests for the mesh split and join tools (S02).
+# suite_mesh_tools.py
+# Run via: blender --background --python tests/blender_suites/suite_mesh_tools.py
+#
+# No .blend file needed — all geometry is created programmatically.
 #
 # REQUIRES: elastic_fit addon installed and enabled.
 #           A VIEW_3D area must be open in Blender.
 #
-# Each STEP_* block creates its own test objects and cleans them up.
-# Run via: blender --background --python tests/test_mesh_tools.py
+# Exit codes:
+#   0 — all assertions passed
+#   1 — one or more [FAIL] lines were printed
 
-# ============================================================
-# STEP 1: Properties exist with correct defaults
-# ============================================================
-STEP_1 = '''
-import bpy
+import sys
 
+# ---- failure counter ----
+_failed = 0
+
+# ---- test helpers ----
 def _assert_true(condition, label):
+    global _failed
     status = "PASS" if condition else "FAIL"
     print(f"  [{status}] {label}")
+    if not condition:
+        _failed += 1
     return condition
 
 def _assert_equal(actual, expected, label):
+    global _failed
     ok = actual == expected
     status = "PASS" if ok else "FAIL"
     extra = "" if ok else f"  (got {actual!r}, expected {expected!r})"
     print(f"  [{status}] {label}{extra}")
+    if not ok:
+        _failed += 1
     return ok
 
-p = bpy.context.scene.efit_props
+# ---- import bpy (Blender's Python API) ----
+import bpy
 
-print("\\n=== STEP 1: mesh tools properties exist with correct defaults ===")
+# ============================================================
+# STEP 1: Properties exist with correct defaults
+# ============================================================
+print("\n=== STEP 1: mesh tools properties exist with correct defaults ===")
+
+p = bpy.context.scene.efit_props
 
 _assert_true(hasattr(p, "mesh_split_mode"),      "mesh_split_mode property exists")
 _assert_true(hasattr(p, "mesh_split_group"),     "mesh_split_group property exists")
 _assert_true(hasattr(p, "mesh_join_merge"),      "mesh_join_merge property exists")
 _assert_true(hasattr(p, "mesh_join_threshold"),  "mesh_join_threshold property exists")
-_assert_equal(p.mesh_split_mode,     "LOOSE_PARTS", "mesh_split_mode default is LOOSE_PARTS")
-_assert_equal(p.mesh_split_group,    "",            "mesh_split_group default is empty")
-_assert_equal(p.mesh_join_merge,     False,         "mesh_join_merge default is False")
+_assert_equal(p.mesh_split_mode,  "LOOSE_PARTS", "mesh_split_mode default is LOOSE_PARTS")
+_assert_equal(p.mesh_split_group, "",            "mesh_split_group default is empty")
+_assert_equal(p.mesh_join_merge,  False,         "mesh_join_merge default is False")
 
 # threshold should be a small positive value
 _assert_true(0.0 < p.mesh_join_threshold <= 0.01,
              f"mesh_join_threshold default is small positive ({p.mesh_join_threshold})")
 
-print("\\n=== STEP 1 COMPLETE ===")
-'''
+print("\n=== STEP 1 COMPLETE ===")
 
 # ============================================================
 # STEP 2: Split by loose parts -- 2-island mesh produces 2 objects
 # ============================================================
-STEP_2 = '''
-import bpy
-
-def _assert_true(condition, label):
-    status = "PASS" if condition else "FAIL"
-    print(f"  [{status}] {label}")
-    return condition
-
-def _assert_equal(actual, expected, label):
-    ok = actual == expected
-    status = "PASS" if ok else "FAIL"
-    extra = "" if ok else f"  (got {actual!r}, expected {expected!r})"
-    print(f"  [{status}] {label}{extra}")
-    return ok
-
-print("\\n=== STEP 2: split by loose parts ===")
+print("\n=== STEP 2: split by loose parts ===")
 
 # Build a mesh with two completely disconnected triangles (two loose parts).
 mesh_data = bpy.data.meshes.new("ECF_Split_LooseData")
@@ -98,28 +97,12 @@ for o in list(bpy.context.scene.objects):
 if "ECF_Split_LooseData" in bpy.data.meshes:
     bpy.data.meshes.remove(bpy.data.meshes["ECF_Split_LooseData"])
 
-print("\\n=== STEP 2 COMPLETE ===")
-'''
+print("\n=== STEP 2 COMPLETE ===")
 
 # ============================================================
 # STEP 3: Split by material -- 2-material mesh produces 2 objects
 # ============================================================
-STEP_3 = '''
-import bpy
-
-def _assert_true(condition, label):
-    status = "PASS" if condition else "FAIL"
-    print(f"  [{status}] {label}")
-    return condition
-
-def _assert_equal(actual, expected, label):
-    ok = actual == expected
-    status = "PASS" if ok else "FAIL"
-    extra = "" if ok else f"  (got {actual!r}, expected {expected!r})"
-    print(f"  [{status}] {label}{extra}")
-    return ok
-
-print("\\n=== STEP 3: split by material ===")
+print("\n=== STEP 3: split by material ===")
 
 # Two faces sharing an edge -- assign different materials to each.
 mesh_data = bpy.data.meshes.new("ECF_Split_MatData")
@@ -166,28 +149,12 @@ for m in list(bpy.data.materials):
     if m.name.startswith("ECF_Split_Mat"):
         bpy.data.materials.remove(m)
 
-print("\\n=== STEP 3 COMPLETE ===")
-'''
+print("\n=== STEP 3 COMPLETE ===")
 
 # ============================================================
 # STEP 4: Split by vertex group -- group verts separate into new object
 # ============================================================
-STEP_4 = '''
-import bpy
-
-def _assert_true(condition, label):
-    status = "PASS" if condition else "FAIL"
-    print(f"  [{status}] {label}")
-    return condition
-
-def _assert_equal(actual, expected, label):
-    ok = actual == expected
-    status = "PASS" if ok else "FAIL"
-    extra = "" if ok else f"  (got {actual!r}, expected {expected!r})"
-    print(f"  [{status}] {label}{extra}")
-    return ok
-
-print("\\n=== STEP 4: split by vertex group ===")
+print("\n=== STEP 4: split by vertex group ===")
 
 # Quad mesh: assign left two verts to a group, leave right two ungrouped.
 mesh_data = bpy.data.meshes.new("ECF_Split_VGData")
@@ -234,28 +201,12 @@ for m in list(bpy.data.meshes):
     if m.name.startswith("ECF_Split_VG"):
         bpy.data.meshes.remove(m)
 
-print("\\n=== STEP 4 COMPLETE ===")
-'''
+print("\n=== STEP 4 COMPLETE ===")
 
 # ============================================================
 # STEP 5: Join -- 2 selected meshes produce 1 object
 # ============================================================
-STEP_5 = '''
-import bpy
-
-def _assert_true(condition, label):
-    status = "PASS" if condition else "FAIL"
-    print(f"  [{status}] {label}")
-    return condition
-
-def _assert_equal(actual, expected, label):
-    ok = actual == expected
-    status = "PASS" if ok else "FAIL"
-    extra = "" if ok else f"  (got {actual!r}, expected {expected!r})"
-    print(f"  [{status}] {label}{extra}")
-    return ok
-
-print("\\n=== STEP 5: join two meshes into one ===")
+print("\n=== STEP 5: join two meshes into one ===")
 
 def _make_tri(name, offset_x):
     d = bpy.data.meshes.new(f"{name}Data")
@@ -302,28 +253,12 @@ for m in list(bpy.data.meshes):
     if m.name.startswith("ECF_Join_"):
         bpy.data.meshes.remove(m)
 
-print("\\n=== STEP 5 COMPLETE ===")
-'''
+print("\n=== STEP 5 COMPLETE ===")
 
 # ============================================================
 # STEP 6: Join with merge-by-distance -- coincident vertices collapsed
 # ============================================================
-STEP_6 = '''
-import bpy
-
-def _assert_true(condition, label):
-    status = "PASS" if condition else "FAIL"
-    print(f"  [{status}] {label}")
-    return condition
-
-def _assert_equal(actual, expected, label):
-    ok = actual == expected
-    status = "PASS" if ok else "FAIL"
-    extra = "" if ok else f"  (got {actual!r}, expected {expected!r})"
-    print(f"  [{status}] {label}{extra}")
-    return ok
-
-print("\\n=== STEP 6: join with merge-by-distance collapses coincident vertices ===")
+print("\n=== STEP 6: join with merge-by-distance collapses coincident vertices ===")
 
 # Two triangles sharing an edge (4 unique vertices when merged, 6 before).
 mesh_a_data = bpy.data.meshes.new("ECF_Merge_AData")
@@ -365,6 +300,11 @@ for m in list(bpy.data.meshes):
     if m.name.startswith("ECF_Merge_"):
         bpy.data.meshes.remove(m)
 
-print("\\n=== STEP 6 COMPLETE ===")
-print("\\n=== ALL MESH TOOLS TESTS COMPLETE ===")
-'''
+print("\n=== STEP 6 COMPLETE ===")
+print("\n=== ALL MESH TOOLS TESTS COMPLETE ===")
+
+# ============================================================
+# Exit
+# ============================================================
+print(f"\n=== MESH TOOLS SUITE {'PASSED' if _failed == 0 else 'FAILED'} ({_failed} failure(s)) ===")
+sys.exit(0 if _failed == 0 else 1)
