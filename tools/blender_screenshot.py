@@ -90,7 +90,8 @@ print(f"[ENGINE] {selected_engine}")
 repo_root = Path(__file__).parent.parent
 base_out = Path(_out_dir).resolve() if _out_dir else repo_root / "tmp"
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-output_dir = base_out / "fit-test" / timestamp
+fit_test_dir = base_out / "fit-test"
+output_dir = fit_test_dir / timestamp
 
 try:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +100,57 @@ except Exception as exc:
     sys.exit(1)
 
 print(f"[SCREENSHOTS] {output_dir}")
+
+
+# ---- prune old screenshot sets ----
+
+_MAX_SCREENSHOT_SETS = 25
+
+
+def _prune_old_screenshot_sets(fit_test_root, max_sets):
+    """Remove the oldest timestamp subdirectories from fit_test_root so that at
+    most *max_sets* directories remain.
+
+    Only directories whose names match the YYYYMMDD_HHMMSS timestamp pattern
+    (exactly 15 characters: 8 digits, underscore, 6 digits) are considered;
+    any other entries are left untouched.
+
+    Directories are sorted lexicographically by name, which is equivalent to
+    chronological order for the YYYYMMDD_HHMMSS format.  The oldest entries
+    (lowest sort values) are deleted first.
+
+    Errors during deletion are printed as warnings and do not abort the script.
+    """
+    import re
+    import shutil
+
+    pattern = re.compile(r"^\d{8}_\d{6}$")
+
+    try:
+        entries = [
+            d for d in fit_test_root.iterdir()
+            if d.is_dir() and pattern.match(d.name)
+        ]
+    except Exception as exc:
+        print(f"[WARNING] could not list screenshot sets in '{fit_test_root}': {exc}")
+        return
+
+    if len(entries) <= max_sets:
+        return  # nothing to prune
+
+    # Sort oldest-first (lexicographic == chronological for this timestamp format)
+    entries.sort(key=lambda d: d.name)
+    to_delete = entries[: len(entries) - max_sets]
+
+    for old_dir in to_delete:
+        try:
+            shutil.rmtree(old_dir)
+            print(f"[PRUNE] removed old screenshot set: {old_dir}")
+        except Exception as exc:
+            print(f"[WARNING] could not remove old screenshot set '{old_dir}': {exc}")
+
+
+_prune_old_screenshot_sets(fit_test_dir, _MAX_SCREENSHOT_SETS)
 
 
 # ---- bounding box ----
