@@ -294,8 +294,75 @@ print(f"[CAMERAS] {len(cameras)} cameras created: {[name for name, _ in cameras]
 print(f"[LIGHTS] {len(lights)} lights created: {[obj.name for obj in lights]}")
 
 
-# ---- placeholder for render loop (implemented in T03) ----
-# T03 iterates over `cameras`, sets scene.camera, renders to output_dir/<view>.png,
-# and exits 0 on success or 1 on render failure.
+# ---- configure render settings ----
 
+scene.render.resolution_x = 1024
+scene.render.resolution_y = 1024
+scene.render.resolution_percentage = 100
+scene.render.image_settings.file_format = "PNG"
+scene.render.image_settings.color_mode = "RGBA"
+# EEVEE render samples: 16 is sufficient for material preview quality
+if hasattr(scene.eevee, "taa_render_samples"):
+    scene.eevee.taa_render_samples = 16
+elif hasattr(scene.eevee, "samples"):
+    scene.eevee.samples = 16
+
+
+# ---- cleanup helper ----
+
+def _cleanup(cameras, lights):
+    """Remove all temporary camera and light objects created by this script.
+
+    Iterates the tracked object lists from the rig setup and removes both the
+    object and its underlying data block so nothing leaks into the scene.
+    """
+    for _name, cam_obj in cameras:
+        try:
+            cam_data = cam_obj.data
+            bpy.data.objects.remove(cam_obj, do_unlink=True)
+            bpy.data.cameras.remove(cam_data)
+        except Exception as exc:
+            print(f"[WARNING] could not remove camera '{cam_obj.name}': {exc}")
+
+    for light_obj in lights:
+        try:
+            light_data = light_obj.data
+            bpy.data.objects.remove(light_obj, do_unlink=True)
+            bpy.data.lights.remove(light_data)
+        except Exception as exc:
+            print(f"[WARNING] could not remove light '{light_obj.name}': {exc}")
+
+
+# ---- render loop ----
+
+render_failed = False
+
+for view_name, cam_obj in cameras:
+    scene.camera = cam_obj
+    out_filepath = str(output_dir / f"{view_name}.png")
+    scene.render.filepath = out_filepath
+
+    print(f"[RENDER] {view_name} -> {out_filepath}")
+
+    try:
+        bpy.ops.render.render(write_still=True)
+    except Exception as exc:
+        print(f"[ERROR] render failed for {view_name}: {exc}", file=sys.stderr)
+        print(f"[ERROR] render failed for {view_name}: {exc}")
+        render_failed = True
+
+
+# ---- cleanup ----
+
+_cleanup(cameras, lights)
+
+
+# ---- final result ----
+
+if render_failed:
+    print("[ERROR] one or more renders failed; see above for details", file=sys.stderr)
+    print("[ERROR] one or more renders failed; see above for details")
+    sys.exit(1)
+
+print(f"[SCREENSHOTS] {output_dir}")
 sys.exit(0)
