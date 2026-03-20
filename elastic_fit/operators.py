@@ -74,6 +74,16 @@ class EFIT_OT_fit(Operator):
         if cloth == body:
             self.report({'ERROR'}, "Clothing and body must be different objects.")
             return {'CANCELLED'}
+        if cloth.name not in context.view_layer.objects:
+            self.report({'ERROR'},
+                        f"'{cloth.name}' is not in the active View Layer. "
+                        "Check that its collection is not excluded.")
+            return {'CANCELLED'}
+        if body.name not in context.view_layer.objects:
+            self.report({'ERROR'},
+                        f"'{body.name}' is not in the active View Layer. "
+                        "Check that its collection is not excluded.")
+            return {'CANCELLED'}
 
         has_sk, blocker_mods = _has_blockers(cloth)
         if has_sk:
