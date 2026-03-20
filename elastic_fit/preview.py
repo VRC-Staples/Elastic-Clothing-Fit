@@ -64,9 +64,13 @@ def _efit_preview_update(context):
         if p.use_proximity_falloff:
             cloth_body_distances = c.get('cloth_body_distances', {})
             if cloth_body_distances:
-                proximity_weights = state._compute_proximity_weights(
-                    cloth_body_distances, fitted_indices,
-                    p.proximity_start, p.proximity_end, p.proximity_curve)
+                if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
+                    proximity_weights = state._compute_proximity_group_weights(
+                        cloth, p.proximity_groups, cloth_body_distances, fitted_indices)
+                else:
+                    proximity_weights = state._compute_proximity_weights(
+                        cloth_body_distances, fitted_indices,
+                        p.proximity_start, p.proximity_end, p.proximity_curve)
         c['proximity_weights'] = proximity_weights
 
         # Build co_buf with smoothed positions; deferred foreach_set covers smoothing,
@@ -270,3 +274,18 @@ def _on_offset_group_name_update(self, context):
     state._efit_cache['offset_group_weights'] = state._compute_offset_group_weights(
         cloth, p.offset_groups, fitted_indices)
     _efit_preview_update(context)
+
+
+def _on_proximity_group_prop_update(self, context):
+    """Property update callback: refreshes the preview when any per-group proximity
+    slider (mode, start, end, curve) changes."""
+    if state._efit_cache:
+        _efit_preview_update(context)
+
+
+def _on_proximity_group_name_update(self, context):
+    """Property update callback: refreshes the preview when a proximity group's
+    vertex group selection changes.  Weight recomputation happens inside
+    _efit_preview_update via the per-group path."""
+    if state._efit_cache:
+        _efit_preview_update(context)

@@ -138,17 +138,56 @@ def _draw_fit_settings(layout, p, in_preview):
     row.prop(p, "use_proxy_hull")
 
 
-def _draw_shape_preservation(layout, p):
-    col = layout.column(align=True)
-    col.prop(p, "smooth_factor")
-    col.prop(p, "smooth_iterations")
+def _draw_proximity_falloff(layout, p, in_preview):
+    """Draw the Proximity Falloff block with three states:
+      - use_proximity_falloff off: only the checkbox shown
+      - on, use_proximity_group_tuning off (or no groups): global controls + tuning checkbox
+      - on, use_proximity_group_tuning on, 1+ groups: per-group rows; global controls hidden
+    """
     layout.prop(p, "use_proximity_falloff")
-    if p.use_proximity_falloff:
+    if not p.use_proximity_falloff:
+        return
+
+    layout.prop(p, "use_proximity_group_tuning")
+
+    if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
+        # Per-group mode: draw one sub-box per group entry.
+        for i, pg in enumerate(p.proximity_groups):
+            grp_box = layout.box()
+            row = grp_box.row(align=True)
+            name_col         = row.column()
+            name_col.enabled = not in_preview
+            name_col.prop(pg, "group_name", text="")
+            rm_col         = row.column()
+            rm_col.enabled = not in_preview
+            op             = rm_col.operator("efit.proximity_group_remove", text="", icon='REMOVE')
+            op.index       = i
+            col = grp_box.column(align=True)
+            col.prop(pg, "proximity_mode")
+            col.prop(pg, "proximity_start")
+            col.prop(pg, "proximity_end")
+            col.prop(pg, "proximity_curve")
+        add_row         = layout.row()
+        add_row.enabled = not in_preview
+        add_row.operator("efit.proximity_group_add", text="Add Group", icon='ADD')
+    else:
+        # Global mode: show global controls, then the add button if tuning is on.
         col = layout.column(align=True)
         col.prop(p, "proximity_mode")
         col.prop(p, "proximity_start")
         col.prop(p, "proximity_end")
         col.prop(p, "proximity_curve")
+        if p.use_proximity_group_tuning:
+            add_row         = layout.row()
+            add_row.enabled = not in_preview
+            add_row.operator("efit.proximity_group_add", text="Add Group", icon='ADD')
+
+
+def _draw_shape_preservation(layout, p, in_preview):
+    col = layout.column(align=True)
+    col.prop(p, "smooth_factor")
+    col.prop(p, "smooth_iterations")
+    _draw_proximity_falloff(layout, p, in_preview)
 
 
 def _draw_preserve_group(layout, p):
@@ -373,7 +412,7 @@ def _full_tab(layout, p, in_preview):
 
     if _collapsible(layout, p, 'show_advanced'):
         _section(layout, p, 'show_fit_settings',          _draw_fit_settings,          p, in_preview)
-        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p)
+        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p, in_preview)
         _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
         _section(layout, p, 'show_preserve_group',         _draw_preserve_group,        p)
         _section(layout, p, 'show_offset_fine_tuning',    _draw_offset_fine_tuning,    p, in_preview)
@@ -390,7 +429,7 @@ def _exclusive_tab(layout, p, in_preview):
 
     if _collapsible(layout, p, 'show_advanced'):
         _section(layout, p, 'show_fit_settings',           _draw_fit_settings,          p, in_preview)
-        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p)
+        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p, in_preview)
         _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
         _section(layout, p, 'show_misc',                   _draw_misc,                  p)
 

@@ -173,9 +173,13 @@ class EFIT_OT_fit(Operator):
         # -- Proximity falloff weights (between steps 5 and 6) --
         proximity_weights = None
         if p.use_proximity_falloff:
-            proximity_weights = state._compute_proximity_weights(
-                cloth_body_distances, fitted_indices,
-                p.proximity_start, p.proximity_end, p.proximity_curve)
+            if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
+                proximity_weights = state._compute_proximity_group_weights(
+                    cloth, p.proximity_groups, cloth_body_distances, fitted_indices)
+            else:
+                proximity_weights = state._compute_proximity_weights(
+                    cloth_body_distances, fitted_indices,
+                    p.proximity_start, p.proximity_end, p.proximity_curve)
 
         # -- Adaptive displacement smoothing --
         _efit_apply_smoothing(
@@ -444,6 +448,7 @@ class EFIT_OT_reset_defaults(Operator):
             'disp_smooth_min', 'disp_smooth_max', 'follow_neighbors',
             'use_proximity_falloff', 'proximity_mode',
             'proximity_start', 'proximity_end', 'proximity_curve',
+            'use_proximity_group_tuning',
             'show_fit_settings', 'show_shape_preservation', 'show_preserve_group',
             'show_displacement_smoothing',
             'show_offset_fine_tuning', 'show_misc',
@@ -483,6 +488,37 @@ class EFIT_OT_offset_group_remove(Operator):
             groups.remove(self.index)
             if state._efit_cache:
                 _efit_preview_update(context)
+        return {'FINISHED'}
+
+
+class EFIT_OT_proximity_group_add(Operator):
+    """Add a new per-group proximity falloff entry."""
+    bl_idname      = "efit.proximity_group_add"
+    bl_label       = "Add Proximity Group"
+    bl_description = "Add a vertex group with its own proximity falloff settings"
+    bl_options     = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        context.scene.efit_props.proximity_groups.add()
+        return {'FINISHED'}
+
+
+class EFIT_OT_proximity_group_remove(Operator):
+    """Remove the proximity group entry at the given list index."""
+    bl_idname      = "efit.proximity_group_remove"
+    bl_label       = "Remove Proximity Group"
+    bl_description = "Remove this per-group proximity falloff entry"
+    bl_options     = {'REGISTER', 'UNDO'}
+
+    index: IntProperty()
+
+    def execute(self, context):
+        groups = context.scene.efit_props.proximity_groups
+        if 0 <= self.index < len(groups):
+            groups.remove(self.index)
+            if state._efit_cache:
+                from .preview import _efit_preview_update as _preview_update
+                _preview_update(context)
         return {'FINISHED'}
 
 

@@ -34,7 +34,7 @@ bl_info = {
 import bpy
 from bpy.props import PointerProperty
 
-from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitArmatureEntry, EFitProperties
+from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProximityGroup, EFitArmatureEntry, EFitProperties
 
 
 from .operators import (
@@ -46,6 +46,8 @@ from .operators import (
     EFIT_OT_clear_blockers,
     EFIT_OT_offset_group_add,
     EFIT_OT_offset_group_remove,
+    EFIT_OT_proximity_group_add,
+    EFIT_OT_proximity_group_remove,
     EFIT_OT_exclusive_group_add,
     EFIT_OT_exclusive_group_remove,
     EFIT_OT_check_update,
@@ -106,6 +108,7 @@ def _efit_session_cleanup_on_load(_):
 # Registration order matters: PropertyGroups used as CollectionProperty types
 # must be registered before the PropertyGroup that holds them.
 _classes = (
+    EFitProximityGroup,
     EFitExclusiveGroup,
     EFitOffsetGroup,
     EFitArmatureEntry,
@@ -118,6 +121,8 @@ _classes = (
     EFIT_OT_clear_blockers,
     EFIT_OT_offset_group_add,
     EFIT_OT_offset_group_remove,
+    EFIT_OT_proximity_group_add,
+    EFIT_OT_proximity_group_remove,
     EFIT_OT_exclusive_group_add,
     EFIT_OT_exclusive_group_remove,
     EFIT_OT_check_update,
@@ -189,12 +194,15 @@ def register():
     from .preview import (
         _on_tab_change, _on_preview_prop_update, _on_smooth_mod_update,
         _on_offset_group_influence_update, _on_offset_group_name_update,
+        _on_proximity_group_prop_update, _on_proximity_group_name_update,
     )
     state.register_handler('tab_change',                        _on_tab_change)
     state.register_handler('preview_prop_update',               _on_preview_prop_update)
     state.register_handler('smooth_mod_update',                 _on_smooth_mod_update)
     state.register_handler('offset_group_influence_update',     _on_offset_group_influence_update)
     state.register_handler('offset_group_name_update',          _on_offset_group_name_update)
+    state.register_handler('proximity_group_update',            _on_proximity_group_prop_update)
+    state.register_handler('proximity_group_name_update',       _on_proximity_group_name_update)
 
     updater.check_for_update()
 
@@ -205,7 +213,8 @@ def register():
 
 def unregister():
     for name in ('tab_change', 'preview_prop_update', 'smooth_mod_update',
-                 'offset_group_influence_update', 'offset_group_name_update'):
+                 'offset_group_influence_update', 'offset_group_name_update',
+                 'proximity_group_update', 'proximity_group_name_update'):
         state.unregister_handler(name)
     if _efit_session_cleanup_on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_efit_session_cleanup_on_load)

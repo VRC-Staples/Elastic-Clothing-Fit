@@ -190,6 +190,59 @@ def _compute_proximity_weights(distances, fitted_indices, start, end, curve_key)
     return dict(zip(vi_arr.tolist(), w_arr.tolist()))
 
 
+def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_indices):
+    """Return {vi: weight} for per-group proximity falloff.
+
+    Each vertex group in proximity_groups applies its own start/end/curve settings
+    to the vertices it contains.  Vertices not covered by any group receive weight 1.0
+    (no falloff reduction).  When a vertex belongs to multiple groups, the last group
+    in the list wins (same deterministic pattern as offset group processing).
+
+    proximity_groups  -- EFitProperties.proximity_groups CollectionProperty
+    distances         -- {vi: float} body distances from the fit cache (already computed
+                         for the global proximity_mode; per-group mode is not re-run)
+    fitted_indices    -- list of vertex indices being fitted
+    """
+    # Default: every fitted vertex gets full weight.
+    result = {vi: 1.0 for vi in fitted_indices}
+
+    if not proximity_groups:
+        return result
+
+    fitted_set = set(fitted_indices)
+
+    for pg in proximity_groups:
+        # Inline sentinel check to avoid circular import with properties.py.
+        pg_name = pg.group_name if (pg.group_name and pg.group_name != "EFIT_NONE") else ""
+        if not pg_name:
+            continue
+        vg = cloth.vertex_groups.get(pg_name)
+        if vg is None:
+            continue
+        vg_idx = vg.index
+
+        # Collect fitted vertices that belong to this group.
+        group_fitted = []
+        for v in cloth.data.vertices:
+            if v.index not in fitted_set:
+                continue
+            for g in v.groups:
+                if g.group == vg_idx and g.weight > 0.0:
+                    group_fitted.append(v.index)
+                    break
+
+        if not group_fitted:
+            continue
+
+        # Compute per-group falloff weights and apply (last-wins).
+        group_weights = _compute_proximity_weights(
+            distances, group_fitted,
+            pg.proximity_start, pg.proximity_end, pg.proximity_curve)
+        result.update(group_weights)
+
+    return result
+
+
 def _apply_disp_smoothing(smoothed, fitted_indices, cloth_adj,
                           ds_passes, ds_thresh_mult, ds_min, ds_max):
     """Apply adaptive multi-pass displacement smoothing and return the result.

@@ -219,6 +219,144 @@ _assert_true(not state._efit_cache, "cache cleared after cancel")
 print("\n=== ALL PROXIMITY TESTS COMPLETE ===")
 
 # ============================================================
+# STEP 7: Per-group checkbox on, 0 groups -> global path still applies
+# ============================================================
+print("\n=== STEP 7: Per-group tuning enabled, 0 groups -> global path ===")
+p.use_proximity_falloff     = True
+p.use_proximity_group_tuning = True
+p.proximity_start = 0.0
+p.proximity_end   = 0.05
+p.proximity_curve = 'SMOOTH'
+# Ensure no groups are present.
+p.proximity_groups.clear()
+
+with bpy.context.temp_override(window=_win, area=_area):
+    result = bpy.ops.efit.fit()
+_assert_equal(result, {'FINISHED'}, "STEP 7: efit.fit returned FINISHED")
+
+c = state._efit_cache
+pw = c.get('proximity_weights') or {}
+_assert_true(len(pw) > 0, f"STEP 7: proximity_weights non-empty ({len(pw)} entries)")
+_assert_all_in_range(pw, 0.0, 1.0, "STEP 7: all weights in [0, 1]")
+
+with bpy.context.temp_override(window=_win, area=_area):
+    bpy.ops.efit.preview_cancel()
+_assert_true(not state._efit_cache, "STEP 7: cache cleared after cancel")
+
+# ============================================================
+# STEP 8: Per-group tuning, 1 group -> group vertices get per-group weights,
+#         ungrouped vertices get weight 1.0
+# ============================================================
+print("\n=== STEP 8: Per-group tuning, 1 group added ===")
+cloth_obj = bpy.data.objects.get(CLOTHING_NAME)
+vg_names = [vg.name for vg in cloth_obj.vertex_groups] if cloth_obj else []
+
+if not vg_names:
+    print("  [SKIP] No vertex groups on clothing — skipping STEP 8-10")
+else:
+    vg1 = vg_names[0]
+    print(f"    Using vertex group: {vg1!r}")
+
+    # Add one proximity group with a very tight end distance.
+    new_pg = p.proximity_groups.add()
+    new_pg.group_name   = vg1
+    new_pg.proximity_start = 0.0
+    new_pg.proximity_end   = 0.001   # extremely tight: most group verts will get ~0.0
+    new_pg.proximity_curve = 'SMOOTH'
+
+    with bpy.context.temp_override(window=_win, area=_area):
+        result = bpy.ops.efit.fit()
+    _assert_equal(result, {'FINISHED'}, "STEP 8: efit.fit returned FINISHED")
+
+    c = state._efit_cache
+    pw = c.get('proximity_weights') or {}
+    _assert_true(len(pw) > 0, f"STEP 8: proximity_weights non-empty ({len(pw)} entries)")
+    _assert_all_in_range(pw, 0.0, 1.0, "STEP 8: all weights in [0, 1]")
+
+    # Ungrouped vertices must have weight 1.0.
+    vg_idx = cloth_obj.vertex_groups[vg1].index
+    in_group    = {v.index for v in cloth_obj.data.vertices
+                   if any(g.group == vg_idx and g.weight > 0.0 for g in v.groups)}
+    fitted_set  = set(c.get('fitted_indices', []))
+    ungrouped   = fitted_set - in_group
+    ungrouped_non_one = {vi: pw[vi] for vi in ungrouped if vi in pw and abs(pw[vi] - 1.0) > 1e-6}
+    _assert_true(len(ungrouped_non_one) == 0,
+                 f"STEP 8: ungrouped vertices all have weight 1.0 ({len(ungrouped_non_one)} violations)")
+
+    with bpy.context.temp_override(window=_win, area=_area):
+        bpy.ops.efit.preview_cancel()
+    _assert_true(not state._efit_cache, "STEP 8: cache cleared after cancel")
+
+    # ============================================================
+    # STEP 9: 2 groups with different end distances -> independent weights
+    # ============================================================
+    print("\n=== STEP 9: 2 proximity groups, different end distances ===")
+    if len(vg_names) < 2:
+        print("  [SKIP] Need at least 2 vertex groups — skipping STEP 9")
+    else:
+        vg2 = vg_names[1]
+        print(f"    Group 1: {vg1!r} end=0.001  Group 2: {vg2!r} end=0.5")
+
+        # Already have 1 group from STEP 8 in p.proximity_groups; add a second.
+        new_pg2 = p.proximity_groups.add()
+        new_pg2.group_name     = vg2
+        new_pg2.proximity_start = 0.0
+        new_pg2.proximity_end   = 0.5    # wide: most group verts will get near-zero weight
+        new_pg2.proximity_curve = 'SMOOTH'
+
+        with bpy.context.temp_override(window=_win, area=_area):
+            result = bpy.ops.efit.fit()
+        _assert_equal(result, {'FINISHED'}, "STEP 9: efit.fit returned FINISHED")
+
+        c = state._efit_cache
+        pw = c.get('proximity_weights') or {}
+        _assert_true(len(pw) > 0, f"STEP 9: proximity_weights non-empty ({len(pw)} entries)")
+        _assert_all_in_range(pw, 0.0, 1.0, "STEP 9: all weights in [0, 1]")
+
+        # Verify ungrouped verts still weight 1.0 with 2 groups.
+        vg2_idx   = cloth_obj.vertex_groups[vg2].index
+        in_group2 = {v.index for v in cloth_obj.data.vertices
+                     if any(g.group == vg2_idx and g.weight > 0.0 for g in v.groups)}
+        ungrouped2 = fitted_set - in_group - in_group2
+        ungrouped2_non_one = {vi: pw[vi] for vi in ungrouped2 if vi in pw and abs(pw[vi] - 1.0) > 1e-6}
+        _assert_true(len(ungrouped2_non_one) == 0,
+                     f"STEP 9: ungrouped vertices all weight 1.0 ({len(ungrouped2_non_one)} violations)")
+
+        with bpy.context.temp_override(window=_win, area=_area):
+            bpy.ops.efit.preview_cancel()
+        _assert_true(not state._efit_cache, "STEP 9: cache cleared after cancel")
+
+    # ============================================================
+    # STEP 10: Remove all groups -> falls back to global path
+    # ============================================================
+    print("\n=== STEP 10: Remove all proximity groups -> global path ===")
+    p.proximity_groups.clear()
+    _assert_equal(len(p.proximity_groups), 0, "STEP 10: proximity_groups cleared")
+
+    # Rerun fit; should behave like global proximity.
+    with bpy.context.temp_override(window=_win, area=_area):
+        result = bpy.ops.efit.fit()
+    _assert_equal(result, {'FINISHED'}, "STEP 10: efit.fit returned FINISHED")
+
+    c = state._efit_cache
+    pw = c.get('proximity_weights') or {}
+    _assert_true(len(pw) > 0, f"STEP 10: proximity_weights non-empty after group removal ({len(pw)} entries)")
+    _assert_all_in_range(pw, 0.0, 1.0, "STEP 10: all weights in [0, 1] after group removal")
+
+    with bpy.context.temp_override(window=_win, area=_area):
+        bpy.ops.efit.preview_cancel()
+    _assert_true(not state._efit_cache, "STEP 10: cache cleared after cancel")
+
+# ============================================================
+# Final cleanup
+# ============================================================
+p.use_proximity_falloff      = False
+p.use_proximity_group_tuning = False
+p.proximity_groups.clear()
+
+print("\n=== ALL PROXIMITY TESTS COMPLETE ===")
+
+# ============================================================
 # Exit
 # ============================================================
 print(f"\n=== PROXIMITY SUITE {'PASSED' if _failed == 0 else 'FAILED'} ({_failed} failure(s)) ===")

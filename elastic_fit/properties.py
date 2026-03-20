@@ -33,6 +33,12 @@ def _on_offset_group_influence_update(self, context):
 def _on_offset_group_name_update(self, context):
     state.call_handler('offset_group_name_update', self, context)
 
+def _on_proximity_group_update(self, context):
+    state.call_handler('proximity_group_update', self, context)
+
+def _on_proximity_group_name_update(self, context):
+    state.call_handler('proximity_group_name_update', self, context)
+
 def _on_show_merge_armatures(self, context):
     # Auto-populate Base and To Merge pickers when section is first expanded.
     if not self.show_merge_armatures or context is None:
@@ -91,6 +97,60 @@ def _resolve_vg_name(value):
     if not value or value == _NONE_SENTINEL:
         return ""
     return value
+
+
+class EFitProximityGroup(PropertyGroup):
+    """One vertex group / falloff settings pair for per-group proximity fine-tuning."""
+    group_name: EnumProperty(
+        name="Vertex Group",
+        description="Vertex group whose proximity falloff will be individually tuned",
+        items=_group_name_items,
+        update=_on_proximity_group_name_update,
+    )
+    proximity_mode: EnumProperty(
+        name="Mode",
+        description="When to measure cloth-to-body distances for this group's falloff",
+        items=[
+            ('PRE_FIT',         "Pre-Fit",         "Measure distances from original clothing positions"),
+            ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Measure distances after the shrinkwrap proxy is applied"),
+        ],
+        default='PRE_FIT',
+        update=_on_proximity_group_update,
+    )
+    proximity_start: FloatProperty(
+        name="Start Distance",
+        description="Vertices in this group closer than this receive full fit pull (weight 1.0)",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        step=0.1,
+        precision=4,
+        subtype='DISTANCE',
+        update=_on_proximity_group_update,
+    )
+    proximity_end: FloatProperty(
+        name="End Distance",
+        description="Vertices in this group farther than this receive no fit pull (weight 0.0)",
+        default=0.05,
+        min=0.001,
+        max=1.0,
+        step=0.1,
+        precision=4,
+        subtype='DISTANCE',
+        update=_on_proximity_group_update,
+    )
+    proximity_curve: EnumProperty(
+        name="Curve",
+        description="Shape of the falloff curve for this group",
+        items=[
+            ('LINEAR', "Linear", "Straight linear falloff"),
+            ('SMOOTH', "Smooth", "Smooth S-curve falloff (recommended)"),
+            ('SHARP',  "Sharp",  "Quick drop-off close to the body"),
+            ('ROOT',   "Root",   "Gradual drop-off, stays full longer"),
+        ],
+        default='SMOOTH',
+        update=_on_proximity_group_update,
+    )
 
 
 class EFitExclusiveGroup(PropertyGroup):
@@ -522,6 +582,22 @@ class EFitProperties(PropertyGroup):
         ],
         default='SMOOTH',
         update=_on_preview_prop_update,
+    )
+
+    # Per-group proximity falloff fine-tuning.
+    # When use_proximity_group_tuning is True and proximity_groups is non-empty,
+    # each group's vertices use that group's falloff settings.
+    # When True but no groups added, the global controls still apply.
+    # Ungrouped vertices always get weight 1.0 (no falloff reduction).
+    use_proximity_group_tuning: BoolProperty(
+        name="Per-Group Fine Tuning",
+        description="Assign independent proximity falloff settings to individual vertex groups",
+        default=False,
+    )
+    proximity_groups: CollectionProperty(
+        name="Proximity Groups",
+        type=EFitProximityGroup,
+        description="Per-vertex-group proximity falloff settings",
     )
 
     # -- Offset fine-tuning groups --
