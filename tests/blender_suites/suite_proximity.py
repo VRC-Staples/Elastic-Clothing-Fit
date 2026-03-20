@@ -5,7 +5,7 @@
 #   blender --background --python tests/blender_suites/suite_proximity.py -- --skip
 #
 # REQUIRES: elastic_fit addon installed and enabled.
-#           tests/ECF_Test3.blend with Body and Dinzee's Trackside Hoodie Bodysuit_Flexuh objects.
+#           tests/ECF_Test3.blend with Body and outfit objects.
 #
 # Exit codes:
 #   0 — all assertions passed, or suite was skipped
@@ -36,7 +36,7 @@ if _blend_root is None:
 
 BLEND_PATH    = os.path.join(_blend_root, "tests", "ECF_Test3.blend")
 BODY_NAME     = "Body"
-CLOTHING_NAME = "Dinzee's Trackside Hoodie Bodysuit_Flexuh"
+CLOTHING_NAME = "outfit"
 
 # ---- failure counter ----
 _failed = 0

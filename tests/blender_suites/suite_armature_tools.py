@@ -241,10 +241,10 @@ print("\n=== STEP 4: efit.merge_armatures with merge_bones=True (join) ===")
 bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
 
 _assert_true("Armature"        in bpy.data.objects, "ECF_Test2: base armature exists")
-_assert_true("Armature Flexuh" in bpy.data.objects, "ECF_Test2: donor armature exists")
+_assert_true("Armature F" in bpy.data.objects, "ECF_Test2: donor armature exists")
 
 base_arm  = bpy.data.objects["Armature"]
-donor_arm = bpy.data.objects["Armature Flexuh"]
+donor_arm = bpy.data.objects["Armature F"]
 
 # Record donor bones and child meshes before merge.
 donor_bone_names  = [b.name for b in donor_arm.data.bones]
@@ -265,7 +265,7 @@ with bpy.context.temp_override(window=_win, area=_area):
 
 _assert_equal(result, {'FINISHED'}, "efit.merge_armatures returned FINISHED")
 _assert_true("Armature"        in bpy.data.objects,     "base armature still present after join")
-_assert_true("Armature Flexuh" not in bpy.data.objects, "donor armature removed after join")
+_assert_true("Armature F" not in bpy.data.objects, "donor armature removed after join")
 
 # Donor bones should now be in base. Use case-insensitive check because the
 # merge preserves base-armature casing when names differ only by case.
@@ -299,10 +299,10 @@ print("\n=== STEP 5: efit.merge_armatures with merge_bones=False (reparent child
 bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
 
 _assert_true("Armature"        in bpy.data.objects, "ECF_Test2: base armature exists")
-_assert_true("Armature Flexuh" in bpy.data.objects, "ECF_Test2: donor armature exists")
+_assert_true("Armature F" in bpy.data.objects, "ECF_Test2: donor armature exists")
 
 base_arm  = bpy.data.objects["Armature"]
-donor_arm = bpy.data.objects["Armature Flexuh"]
+donor_arm = bpy.data.objects["Armature F"]
 
 # Record donor child meshes before merge.
 donor_child_names = [o.name for o in bpy.data.objects if o.parent == donor_arm and o.type == 'MESH']
@@ -323,7 +323,7 @@ _assert_equal(result, {'FINISHED'}, "efit.merge_armatures returned FINISHED")
 
 # Both armatures still exist -- no join happened.
 _assert_true("Armature"        in bpy.data.objects, "base armature still exists (no join)")
-_assert_true("Armature Flexuh" in bpy.data.objects, "donor armature still exists (no join)")
+_assert_true("Armature F" in bpy.data.objects, "donor armature still exists (no join)")
 
 # Child meshes reparented to base with armature modifiers retargeted.
 base_arm = bpy.data.objects["Armature"]
@@ -359,10 +359,10 @@ print("\n-- Sub-test A: alignment with real armatures from ECF_Test2.blend --")
 bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
 
 _assert_true("Armature"        in bpy.data.objects, "ECF_Test2: base armature exists")
-_assert_true("Armature Flexuh" in bpy.data.objects, "ECF_Test2: donor armature exists")
+_assert_true("Armature F" in bpy.data.objects, "ECF_Test2: donor armature exists")
 
 base_arm  = bpy.data.objects["Armature"]
-donor_arm = bpy.data.objects["Armature Flexuh"]
+donor_arm = bpy.data.objects["Armature F"]
 
 base_map  = {b.name.lower(): b.name for b in base_arm.data.bones}
 donor_map = {b.name.lower(): b.name for b in donor_arm.data.bones}
