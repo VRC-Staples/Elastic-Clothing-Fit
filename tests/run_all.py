@@ -73,6 +73,47 @@ def _run_suite(blender, script_path, blend_root, extra_args=None):
     return result.returncode, combined
 
 
+def _run_screenshots(blender, blend_path, out_root):
+    """Run blender_screenshot.py for a blend file after a suite completes.
+
+    blender    -- path to blender executable (already resolved)
+    blend_path -- absolute path string to the .blend file
+    out_root   -- repo root used to construct the output directory (tmp/ subdir)
+
+    Returns the [SCREENSHOTS] output directory path on success, or None on failure.
+    Failure is non-fatal: a [WARN] line is printed but nothing is raised.
+    """
+    screenshot_script = str(_ROOT / "tools" / "blender_screenshot.py")
+    out_dir = str(pathlib.Path(out_root) / "tmp")
+    cmd = [
+        blender, "--background",
+        "--python", screenshot_script,
+        "--",
+        "--blend-file", str(blend_path),
+        "--out-dir", out_dir,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        combined = result.stdout + result.stderr
+        if result.returncode != 0:
+            # include truncated stderr so the warning is self-describing
+            reason = f"exit code {result.returncode}"
+            stderr_snippet = result.stderr.strip()
+            if stderr_snippet:
+                # limit to last 200 chars to keep output readable
+                reason += ": " + stderr_snippet[-200:]
+            return None, reason
+        # extract the [SCREENSHOTS] line for the output path
+        for line in combined.splitlines():
+            if line.strip().startswith("[SCREENSHOTS]"):
+                parts = line.strip().split(None, 1)
+                if len(parts) == 2:
+                    return parts[1], None
+        return None, "no [SCREENSHOTS] line found in output"
+    except Exception as exc:
+        return None, str(exc)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="One-shot regression runner for Elastic Clothing Fit"
@@ -140,6 +181,15 @@ def main():
         # ------------------------------------------------------------------
         # 4. Run each functional suite
         # ------------------------------------------------------------------
+        # Blend file to use for screenshots after each blend-using suite.
+        # Suites not in this mapping (mesh_tools, ux_tabs) do not trigger screenshots.
+        SCREENSHOT_BLEND = {
+            "Fit Pipeline":   "ECF_Test.blend",
+            "Proximity":      "ECF_Test.blend",
+            "Armature Tools": "ECF_Test2.blend",
+            "Proxy Hull":     "ECF_Test.blend",
+        }
+
         fit_pipeline_failed = False
 
         for name, script_file, needs_blend_root in SUITES:
@@ -168,6 +218,15 @@ def main():
                 "skipped":  skipped,
                 "failures": failures,
             })
+
+            if name in SCREENSHOT_BLEND:
+                blend_file = SCREENSHOT_BLEND[name]
+                blend_abs = str(pathlib.Path(blend_root) / "tests" / blend_file)
+                screenshot_dir, err = _run_screenshots(blender, blend_abs, blend_root)
+                if err is not None:
+                    print(f"[WARN] screenshots failed for {name}: {err}")
+                else:
+                    print(f"[SCREENSHOTS] {screenshot_dir}")
 
             if name == "Fit Pipeline" and failed > 0:
                 fit_pipeline_failed = True
