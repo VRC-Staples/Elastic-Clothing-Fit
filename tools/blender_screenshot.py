@@ -266,12 +266,12 @@ def _setup_lights(scene, center, size):
 _VIEW_CONFIGS = [
     {
         "name": "front",
-        "direction": Vector((0.0, 1.0, 0.0)),   # looking towards -Y
+        "direction": Vector((0.0, -1.0, 0.0)),  # character faces -Y; sit on -Y side looking toward +Y
         "scale_axes": ("x", "z"),
     },
     {
         "name": "back",
-        "direction": Vector((0.0, -1.0, 0.0)),  # looking towards +Y
+        "direction": Vector((0.0, 1.0, 0.0)),   # sit on +Y side looking toward -Y
         "scale_axes": ("x", "z"),
     },
     {
