@@ -32,6 +32,7 @@ SUITES = [
     ("Armature Tools", "suite_armature_tools.py",  True),
     ("Mesh Tools",     "suite_mesh_tools.py",      False),
     ("Proxy Hull",     "suite_proxy_hull.py",      True),
+    ("VG Stability",   "suite_vg_stability.py",    True),
 ]
 
 

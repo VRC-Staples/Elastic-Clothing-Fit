@@ -212,8 +212,8 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
     fitted_set = set(fitted_indices)
 
     for pg in proximity_groups:
-        # Inline sentinel check to avoid circular import with properties.py.
-        pg_name = pg.group_name if (pg.group_name and pg.group_name != "EFIT_NONE") else ""
+        # Empty string means no group selected.
+        pg_name = pg.group_name.strip() if pg.group_name else ""
         if not pg_name:
             continue
         vg = cloth.vertex_groups.get(pg_name)
@@ -348,7 +348,8 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
     fitted_set = set(fitted_indices)
     offset_group_weights = {}
     for og in offset_groups:
-        og_name = og.group_name if og.group_name and og.group_name != "EFIT_NONE" else ""
+        # Empty string means no group selected.
+        og_name = og.group_name.strip() if og.group_name else ""
         if not og_name:
             continue
         vg = cloth.vertex_groups.get(og_name)

@@ -54,57 +54,43 @@ def _on_show_merge_armatures(self, context):
     if len(armatures) >= 2:
         self.merge_target_armature = armatures[1]
 
-# Sentinel value used as the enum identifier for the "no group selected" item.
-# Must be a non-empty string — Blender rejects empty identifiers in dynamic enums,
-# which causes "None not selectable" and index-drift (random group switching) bugs.
-_NONE_SENTINEL = "EFIT_NONE"
+# StringProperty search callbacks for vertex group pickers.
+# These return autocomplete candidates for Blender's search UI.
+# StringProperty stores the name directly — immune to index-drift when groups
+# are added, removed, or reordered on the clothing mesh.
 
-# Module-level caches keep the enum item lists alive between Blender redraws.
-# Blender can GC the list returned from an items callback if nothing else holds a reference.
-_preserve_group_items_cache = []
-_group_name_items_cache = []
-
-
-def _preserve_group_items(self, context):
-    # self is an EFitProperties instance; clothing_obj is accessible directly.
-    # Reverses creation order so the most recently added group appears at the top.
-    global _preserve_group_items_cache
-    items = [(_NONE_SENTINEL, "None", "No preserve group")]
+def _preserve_group_search(self, context, edit_text):
+    # self is an EFitProperties instance.
     if self.clothing_obj and self.clothing_obj.type == 'MESH':
-        for vg in reversed(self.clothing_obj.vertex_groups):
-            items.append((vg.name, vg.name, ""))
-    _preserve_group_items_cache = items
-    return items
+        return [vg.name for vg in self.clothing_obj.vertex_groups
+                if edit_text.lower() in vg.name.lower()]
+    return []
 
 
-def _group_name_items(self, context):
-    # self is an EFitOffsetGroup instance; reach the clothing obj through the scene.
-    # context may be None during undo/redo; guard before accessing it.
-    # Reverses creation order so the most recently added group appears at the top.
-    global _group_name_items_cache
-    items = [(_NONE_SENTINEL, "None", "No vertex group")]
-    if context is not None:
-        p = context.scene.efit_props
-        if p.clothing_obj and p.clothing_obj.type == 'MESH':
-            for vg in reversed(p.clothing_obj.vertex_groups):
-                items.append((vg.name, vg.name, ""))
-    _group_name_items_cache = items
-    return items
+def _group_name_search(self, context, edit_text):
+    # self is an EFitOffsetGroup / EFitExclusiveGroup / EFitProximityGroup instance.
+    # Reach the clothing object through the scene; guard against missing context.
+    if context is None:
+        return []
+    p = context.scene.efit_props
+    if p.clothing_obj and p.clothing_obj.type == 'MESH':
+        return [vg.name for vg in p.clothing_obj.vertex_groups
+                if edit_text.lower() in vg.name.lower()]
+    return []
 
 
 def _resolve_vg_name(value):
-    """Return the real vertex group name, or '' if the sentinel/empty is stored."""
-    if not value or value == _NONE_SENTINEL:
-        return ""
-    return value
+    """Return the real vertex group name, or '' if empty/unset."""
+    return value or ""
 
 
 class EFitProximityGroup(PropertyGroup):
     """One vertex group / falloff settings pair for per-group proximity fine-tuning."""
-    group_name: EnumProperty(
+    group_name: StringProperty(
         name="Vertex Group",
         description="Vertex group whose proximity falloff will be individually tuned",
-        items=_group_name_items,
+        default="",
+        search=_group_name_search,
         update=_on_proximity_group_name_update,
     )
     proximity_mode: EnumProperty(
@@ -155,10 +141,11 @@ class EFitProximityGroup(PropertyGroup):
 
 class EFitExclusiveGroup(PropertyGroup):
     """A single vertex group entry for Exclusive Vertex Group Fit mode."""
-    group_name: EnumProperty(
+    group_name: StringProperty(
         name="Vertex Group",
         description="Vertex group to fit exclusively to the body",
-        items=_group_name_items,
+        default="",
+        search=_group_name_search,
     )
     influence: IntProperty(
         name="Influence",
@@ -173,10 +160,11 @@ class EFitExclusiveGroup(PropertyGroup):
 
 class EFitOffsetGroup(PropertyGroup):
     """One vertex group / influence pair for per-group offset fine-tuning."""
-    group_name: EnumProperty(
+    group_name: StringProperty(
         name="Vertex Group",
         description="Vertex group whose offset influence will be adjusted",
-        items=_group_name_items,
+        default="",
+        search=_group_name_search,
         update=_on_offset_group_name_update,
     )
     influence: IntProperty(
@@ -461,10 +449,11 @@ class EFitProperties(PropertyGroup):
 
     # -- Preserve group (optional) --
 
-    preserve_group: EnumProperty(
+    preserve_group: StringProperty(
         name="Preserve Group",
         description="Vertex group that will not be fitted to the body. These vertices will gently follow nearby fitted areas instead.",
-        items=_preserve_group_items,
+        default="",
+        search=_preserve_group_search,
     )
     follow_strength: FloatProperty(
         name="Follow Strength",
