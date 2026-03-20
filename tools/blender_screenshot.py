@@ -19,6 +19,7 @@ from pathlib import Path
 from datetime import datetime
 
 import bpy
+from mathutils import Vector
 
 
 # ---- parse CLI args (same pattern as tests/blender_suites/suite_fit_pipeline.py) ----
@@ -100,8 +101,201 @@ except Exception as exc:
 print(f"[SCREENSHOTS] {output_dir}")
 
 
+# ---- bounding box ----
+
+def _get_scene_bounds(scene):
+    """Return (center: Vector, dimensions: Vector) in world space for all mesh objects.
+
+    If no mesh objects are present the function returns a safe default so downstream
+    camera and light setup does not crash.
+    """
+    mesh_objects = [obj for obj in scene.objects if obj.type == "MESH"]
+
+    if not mesh_objects:
+        # safe default: unit cube at origin
+        return Vector((0.0, 0.0, 0.0)), Vector((1.0, 1.0, 1.0))
+
+    # Accumulate world-space corners across all mesh objects.
+    xs, ys, zs = [], [], []
+    for obj in mesh_objects:
+        for corner in obj.bound_box:
+            world_corner = obj.matrix_world @ Vector(corner)
+            xs.append(world_corner.x)
+            ys.append(world_corner.y)
+            zs.append(world_corner.z)
+
+    min_v = Vector((min(xs), min(ys), min(zs)))
+    max_v = Vector((max(xs), max(ys), max(zs)))
+    center = (min_v + max_v) / 2.0
+    dimensions = max_v - min_v
+
+    # Guard against degenerate (zero-size) meshes on any axis.
+    if dimensions.x < 1e-6:
+        dimensions.x = 1.0
+    if dimensions.y < 1e-6:
+        dimensions.y = 1.0
+    if dimensions.z < 1e-6:
+        dimensions.z = 1.0
+
+    return center, dimensions
+
+
+# ---- lighting ----
+
+def _setup_lights(scene, center, size):
+    """Create a three-point lighting rig sized to the scene bounding box.
+
+    Returns a list of bpy.types.Object so T03 can remove them during cleanup.
+
+    Positions:
+      key  -- upper-front-left  (45 deg, positive Y forward convention)
+      fill -- upper-front-right (lower energy, opposite side from key)
+      rim  -- back-top          (behind the subject, creates separation)
+    """
+    max_dim = max(size.x, size.y, size.z)
+    base_energy = max_dim * 10.0
+    dist = max_dim * 2.0
+
+    light_specs = [
+        {
+            "name": "ECF_Light_Key",
+            "type": "AREA",
+            "energy": base_energy,
+            # front-left-above: +X is right, +Y is towards viewer, +Z is up
+            "offset": Vector((-dist, dist, dist)),
+        },
+        {
+            "name": "ECF_Light_Fill",
+            "type": "AREA",
+            "energy": base_energy * 0.5,
+            # front-right-above: opposite side from key
+            "offset": Vector((dist, dist, dist * 0.5)),
+        },
+        {
+            "name": "ECF_Light_Rim",
+            "type": "AREA",
+            "energy": base_energy * 0.3,
+            # directly behind and above
+            "offset": Vector((0.0, -dist, dist * 1.5)),
+        },
+    ]
+
+    created = []
+    for spec in light_specs:
+        light_data = bpy.data.lights.new(name=spec["name"], type=spec["type"])
+        light_data.energy = spec["energy"]
+        # AREA lights use size to control spread; scale with scene
+        light_data.size = max_dim * 0.5
+
+        light_obj = bpy.data.objects.new(name=spec["name"], object_data=light_data)
+        light_obj.location = center + spec["offset"]
+
+        # point the light at the scene center
+        direction = center - light_obj.location
+        rot = direction.to_track_quat("-Z", "Y")
+        light_obj.rotation_euler = rot.to_euler()
+
+        scene.collection.objects.link(light_obj)
+        created.append(light_obj)
+
+    return created
+
+
+# ---- camera rig ----
+
+# Six orthographic views: name, normalized direction from center, and which two
+# bounding box axes determine the ortho_scale for that view.
+#
+# scale_axes selects which two dimension components form the visible cross-section
+# for each camera direction:
+#   front/back  -> X width, Z height
+#   left/right  -> Y depth, Z height
+#   top/bottom  -> X width, Y depth
+_VIEW_CONFIGS = [
+    {
+        "name": "front",
+        "direction": Vector((0.0, 1.0, 0.0)),   # looking towards -Y
+        "scale_axes": ("x", "z"),
+    },
+    {
+        "name": "back",
+        "direction": Vector((0.0, -1.0, 0.0)),  # looking towards +Y
+        "scale_axes": ("x", "z"),
+    },
+    {
+        "name": "left",
+        "direction": Vector((-1.0, 0.0, 0.0)),  # looking towards +X
+        "scale_axes": ("y", "z"),
+    },
+    {
+        "name": "right",
+        "direction": Vector((1.0, 0.0, 0.0)),   # looking towards -X
+        "scale_axes": ("y", "z"),
+    },
+    {
+        "name": "top",
+        "direction": Vector((0.0, 0.0, 1.0)),   # looking towards -Z
+        "scale_axes": ("x", "y"),
+    },
+    {
+        "name": "bottom",
+        "direction": Vector((0.0, 0.0, -1.0)),  # looking towards +Z
+        "scale_axes": ("x", "y"),
+    },
+]
+
+
+def _setup_cameras(scene, center, size):
+    """Create one orthographic camera per view, tightly framed to the bounding box.
+
+    Each camera is placed at center + direction * (max_dim * 2.5) and pointed back
+    at center using to_track_quat so it is always axis-aligned and upright.
+
+    ortho_scale is set to max(cross-section axes) * 1.1 (10% padding).
+
+    Returns a list of (view_name, camera_obj) tuples for the T03 render loop.
+    """
+    max_dim = max(size.x, size.y, size.z)
+    camera_distance = max_dim * 2.5
+
+    cameras = []
+    for cfg in _VIEW_CONFIGS:
+        cam_data = bpy.data.cameras.new(name=f"ECF_Cam_{cfg['name']}")
+        cam_data.type = "ORTHO"
+
+        # ortho_scale = largest visible cross-section extent + 10% padding
+        a0 = getattr(size, cfg["scale_axes"][0])
+        a1 = getattr(size, cfg["scale_axes"][1])
+        cam_data.ortho_scale = max(a0, a1) * 1.1
+
+        cam_obj = bpy.data.objects.new(name=f"ECF_Cam_{cfg['name']}", object_data=cam_data)
+        cam_obj.location = center + cfg["direction"] * camera_distance
+
+        # point camera back at the scene center
+        direction_to_center = center - cam_obj.location
+        rot = direction_to_center.to_track_quat("-Z", "Y")
+        cam_obj.rotation_euler = rot.to_euler()
+
+        scene.collection.objects.link(cam_obj)
+        cameras.append((cfg["name"], cam_obj))
+
+    return cameras
+
+
+# ---- compute bounds and build rig ----
+
+scene_center, scene_size = _get_scene_bounds(scene)
+lights = _setup_lights(scene, scene_center, scene_size)
+cameras = _setup_cameras(scene, scene_center, scene_size)
+
+print(f"[BOUNDS] center={tuple(round(v, 3) for v in scene_center)} "
+      f"size={tuple(round(v, 3) for v in scene_size)}")
+print(f"[CAMERAS] {len(cameras)} cameras created: {[name for name, _ in cameras]}")
+print(f"[LIGHTS] {len(lights)} lights created: {[obj.name for obj in lights]}")
+
+
 # ---- placeholder for render loop (implemented in T03) ----
-# T02 adds bounding box computation, camera rig, and lighting.
-# T03 adds the render loop that writes PNGs and calls sys.exit based on results.
+# T03 iterates over `cameras`, sets scene.camera, renders to output_dir/<view>.png,
+# and exits 0 on success or 1 on render failure.
 
 sys.exit(0)
