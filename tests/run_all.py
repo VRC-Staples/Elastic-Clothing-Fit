@@ -185,7 +185,7 @@ def main():
         # Suites not in this mapping (mesh_tools, ux_tabs) do not trigger screenshots.
         SCREENSHOT_BLEND = {
             "Fit Pipeline":   "ECF_Test.blend",
-            "Proximity":      "ECF_Test.blend",
+            "Proximity":      "ECF_Test3.blend",
             "Armature Tools": "ECF_Test2.blend",
             "Proxy Hull":     "ECF_Test.blend",
         }

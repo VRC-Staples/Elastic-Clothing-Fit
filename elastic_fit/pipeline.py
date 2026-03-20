@@ -282,7 +282,19 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             cloth_body_normals[vi] = normal.normalized()
         else:
             cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
-        cloth_body_distances[vi] = dist if dist is not None else 0.0
+        if dist is None:
+            cloth_body_distances[vi] = 0.0
+        elif loc is not None and normal is not None:
+            # Sign the distance: vertices inside the body mesh have their
+            # nearest-surface normal pointing away from them (negative dot),
+            # so we treat them as distance 0 to guarantee full proximity weight.
+            # Without this, inside-body verts get a non-zero distance that can
+            # fall in the falloff band and receive a reduced weight, preventing
+            # the shrinkwrap displacement from pulling them outside the body.
+            dot = (v.co - loc).dot(normal)
+            cloth_body_distances[vi] = dist if dot >= 0.0 else 0.0
+        else:
+            cloth_body_distances[vi] = dist
 
     # Precompute per-fitted-vertex weights for offset influence groups.
     # In EVGF mode the exclusive groups carry their own influence sliders;
