@@ -285,14 +285,18 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
         if dist is None:
             cloth_body_distances[vi] = 0.0
         elif loc is not None and normal is not None:
-            # Sign the distance: vertices inside the body mesh have their
-            # nearest-surface normal pointing away from them (negative dot),
-            # so we treat them as distance 0 to guarantee full proximity weight.
-            # Without this, inside-body verts get a non-zero distance that can
-            # fall in the falloff band and receive a reduced weight, preventing
-            # the shrinkwrap displacement from pulling them outside the body.
-            dot = (v.co - loc).dot(normal)
-            cloth_body_distances[vi] = dist if dot >= 0.0 else 0.0
+            # Detect inside/outside via ray cast along the nearest face normal.
+            # A ray fired outward from an inside vertex hits the far body wall
+            # (hit is not None); from an outside vertex the ray exits the mesh
+            # without a hit (hit is None).  This is reliable for non-convex
+            # meshes where the dot-product sign test fails: in concave regions
+            # (inner thigh, crotch, armpits) the nearest face normal can point
+            # inward relative to an outside query point, causing the dot test to
+            # misidentify outside verts as inside and apply their full (large)
+            # displacement unconditionally -- which explodes the mesh.
+            n_unit = normal.normalized()
+            hit, _, _, _ = bvh_body.ray_cast(v.co + n_unit * 0.0001, n_unit)
+            cloth_body_distances[vi] = 0.0 if (hit is not None) else dist
         else:
             cloth_body_distances[vi] = dist
 
