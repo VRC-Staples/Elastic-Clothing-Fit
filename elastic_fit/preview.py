@@ -167,8 +167,10 @@ def _efit_preview_update(context):
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
-    except Exception:
+    except Exception as exc:
         import traceback
+        state._efit_last_error = str(exc)
+        print(f"[ECF] preview update failed: {exc}")
         traceback.print_exc()
     finally:
         state._efit_updating = False

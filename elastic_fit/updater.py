@@ -82,8 +82,8 @@ def _schedule_redraw():
 
     try:
         bpy.app.timers.register(_do_redraw, first_interval=0.0)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[ECF] redraw schedule failed: {exc}")
 
 
 def _parse_version(tag):

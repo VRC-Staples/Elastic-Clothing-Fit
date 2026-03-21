@@ -30,6 +30,12 @@ _efit_originals = {}
 # writes vertex positions back to the mesh (which can retrigger update callbacks).
 _efit_updating = False
 
+# Last exception string from _efit_preview_update.  Set by the except block so
+# that future debugging sessions can call `state._efit_last_error` in the
+# Blender Python console without needing a live error in progress.
+# Follows the _efit_updating pattern: module-level, reset to '' on a clean run.
+_efit_last_error = ''
+
 # Cache for _has_blockers_cached.  Key: (obj.name, n_mods, n_shape_keys).
 # Cleared on every miss so stale keys never accumulate.
 _blocker_cache = {}
