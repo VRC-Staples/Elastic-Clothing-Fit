@@ -10,6 +10,8 @@ import re
 import sys
 import threading
 import subprocess
+import urllib.error
+import urllib.request
 
 import bpy
 
@@ -179,6 +181,43 @@ def _parse_blender_min(body):
     return None
 
 
+def _validate_dev_url(url):
+    """Validate dev_update_url against a localhost-only allowlist.
+
+    Only http/https scheme is accepted, and the host must be localhost,
+    127.0.0.1, or a *.local mDNS hostname — never a public internet address.
+
+    Raises ValueError with a descriptive message on any mismatch.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        raise ValueError(
+            f"dev_update_url scheme must be http or https, got: {parsed.scheme!r}"
+        )
+    host = parsed.hostname or ''
+    if host not in ('localhost', '127.0.0.1') and not host.endswith('.local'):
+        raise ValueError(
+            f"dev_update_url host must be localhost/127.0.0.1/*.local, got: {host!r}"
+        )
+
+
+class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject HTTP redirects that point outside _VALID_DOWNLOAD_DOMAINS.
+
+    GitHub's CDN (objects.githubusercontent.com, github-releases.githubusercontent.com)
+    is the only expected redirect target.  Any other domain indicates a potential
+    redirect attack and should fail loudly rather than silently following.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not any(newurl.startswith(d) for d in _VALID_DOWNLOAD_DOMAINS):
+            raise urllib.error.URLError(
+                f"Redirect to untrusted domain blocked: {newurl}"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def check_for_update():
     """Spawn a background thread that queries the GitHub releases API.
 
@@ -199,6 +238,16 @@ def check_for_update():
         dev_url_base = ''
 
     blender_version = bpy.app.version
+
+    if dev_url_base:
+        try:
+            _validate_dev_url(dev_url_base)
+        except ValueError as e:
+            with _state_lock:
+                _state['status'] = 'error'
+                _state['error']  = str(e)[:120]
+            _schedule_redraw()
+            return
 
     with _state_lock:
         _state['status'] = 'checking'
@@ -225,7 +274,6 @@ def _check_thread(use_nightly=False, dev_url_base='', blender_version=(0, 0, 0))
     the main-thread caller so this function is safe to run in a daemon thread.
     """
     try:
-        import urllib.request
         import json
 
         current = _get_current_version()
@@ -235,7 +283,8 @@ def _check_thread(use_nightly=False, dev_url_base='', blender_version=(0, 0, 0))
                 url,
                 headers={'User-Agent': 'ElasticClothingFit-Updater'},
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            opener = urllib.request.build_opener(_AllowlistRedirectHandler)
+            with opener.open(req, timeout=10) as resp:
                 return json.loads(resp.read().decode('utf-8'))
 
         # Build API URLs from pre-resolved channel preference
@@ -389,8 +438,6 @@ def _download_thread(scripts_dir=''):
     """
     zip_path = ''
     try:
-        import urllib.request
-
         tag       = _state['tag']
         url       = _state['url']
         cache_dir = os.path.join(scripts_dir, 'efit_update_cache')
@@ -403,12 +450,17 @@ def _download_thread(scripts_dir=''):
         )
 
         def _open(req):
-            return urllib.request.urlopen(req, timeout=60)
+            opener = urllib.request.build_opener(_AllowlistRedirectHandler)
+            return opener.open(req, timeout=60)
 
         resp = _open(req)
 
         total      = int(resp.headers.get('Content-Length', 0) or 0)
         chunk_size = 65536  # 64 KB
+
+        # Initialise SHA-256 hash so we compute the digest inline during the
+        # write loop — no second full-file read needed after download completes.
+        h = hashlib.sha256()
 
         downloaded         = 0
         _last_redraw_pct   = 0.0
@@ -418,6 +470,7 @@ def _download_thread(scripts_dir=''):
                 if not chunk:
                     break
                 fh.write(chunk)
+                h.update(chunk)
                 downloaded += len(chunk)
                 if total > 0:
                     _state['progress'] = downloaded / total
@@ -428,13 +481,11 @@ def _download_thread(scripts_dir=''):
 
         resp.close()
 
-        # Verify SHA-256 if the release notes contained one.
+        # Verify SHA-256 against the hash embedded in the release notes.
+        # If the release provides no hash, the download is rejected outright —
+        # silently skipping verification would allow a tampered zip to be installed.
         expected = _state.get('expected_sha256')
         if expected:
-            h = hashlib.sha256()
-            with open(zip_path, 'rb') as fh:
-                for chunk in iter(lambda: fh.read(65536), b''):
-                    h.update(chunk)
             if h.hexdigest() != expected:
                 try:
                     os.remove(zip_path)
@@ -446,7 +497,11 @@ def _download_thread(scripts_dir=''):
                 _schedule_redraw()
                 return
         else:
-            print("[elastic_fit updater] No SHA-256 in release notes, skipping verification")
+            with _state_lock:
+                _state['status'] = 'error'
+                _state['error']  = 'Release has no SHA-256 hash \u2014 cannot verify download integrity'
+            _schedule_redraw()
+            return
 
         with _state_lock:
             _state['zip_path'] = zip_path
