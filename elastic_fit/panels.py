@@ -41,15 +41,17 @@ def _wrap_text(text, max_chars=40, max_lines=3):
 def _draw_mesh_pickers(layout, p, in_preview):
     box         = layout.box()
     box.enabled = not in_preview
-    box.label(text="Select Meshes", icon='MESH_DATA')
+    both_set = p.body_obj and p.clothing_obj
+    icon = 'CHECKMARK' if both_set else 'MESH_DATA'
+    box.label(text="Select Meshes", icon=icon)
     if not p.body_obj or not p.clothing_obj:
         box.label(text="Pick your avatar body, then the clothing item to fit.", icon='INFO')
     box.prop(p, "body_obj",     icon='OUTLINER_OB_MESH')
     box.prop(p, "clothing_obj", icon='MATCLOTH')
     if p.body_obj and p.clothing_obj and p.body_obj == p.clothing_obj:
-        dup = box.box()
-        dup.alert = True
-        dup.label(text="Body and clothing must be different meshes.", icon='ERROR')
+        col = box.column()
+        col.alert = True
+        col.label(text="Body and clothing must be different meshes.", icon='ERROR')
 
 
 def _draw_blocker_warnings(layout, p):
@@ -152,6 +154,10 @@ def _draw_proximity_falloff(layout, p, in_preview):
 
     if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
         # Per-group mode: draw one sub-box per group entry.
+        header         = layout.row(align=True)
+        header.scale_y = 0.6
+        header.label(text="Vertex Group")
+        header.label(text="Settings")
         for i, pg in enumerate(p.proximity_groups):
             grp_box = layout.box()
             row = grp_box.row(align=True)
@@ -295,15 +301,14 @@ def _tools_tab(layout, p):
 
 
 def _draw_exclusive_groups(layout, p, in_preview):
-    sub = layout.box()
-    sub.label(text="Groups to Fit", icon='GROUP_VERTEX')
+    layout.label(text="Groups to Fit", icon='GROUP_VERTEX')
     if p.exclusive_groups:
-        header         = sub.row(align=True)
+        header         = layout.row(align=True)
         header.scale_y = 0.6
         header.label(text="Vertex Group")
         header.label(text="Influence")
     for i, eg in enumerate(p.exclusive_groups):
-        row              = sub.row(align=True)
+        row              = layout.row(align=True)
         name_col         = row.column()
         name_col.enabled = not in_preview
         name_col.prop(eg, "group_name", text="")
@@ -312,7 +317,7 @@ def _draw_exclusive_groups(layout, p, in_preview):
         rm_col.enabled = not in_preview
         op             = rm_col.operator("efit.exclusive_group_remove", text="", icon='REMOVE')
         op.index       = i
-    add_row         = sub.row()
+    add_row         = layout.row()
     add_row.enabled = not in_preview
     add_row.operator("efit.exclusive_group_add", text="Add Group", icon='ADD')
 
@@ -474,6 +479,14 @@ class SVRC_PT_elastic_fit(Panel):
         layout     = self.layout
         p          = context.scene.efit_props
         in_preview = bool(state._efit_cache)
+
+        if in_preview:
+            alert_row       = layout.row()
+            alert_row.alert = True
+            alert_row.label(
+                text="Preview Mode — Adjust sliders, then Apply or Cancel",
+                icon='HIDE_OFF',
+            )
 
         row         = layout.row(align=True)
         row.enabled = not in_preview
