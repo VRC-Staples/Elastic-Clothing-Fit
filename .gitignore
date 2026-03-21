@@ -8,13 +8,11 @@ wiki/
 docs/
 *.blend*
 elastic_fit/_dev_mode
-.gsd/
 artifacts/
 mock-update-server.ps1
 dev-install.ps1
 
 # ── GSD baseline (auto-generated) ──
-.gsd
 .DS_Store
 Thumbs.db
 *.swp
