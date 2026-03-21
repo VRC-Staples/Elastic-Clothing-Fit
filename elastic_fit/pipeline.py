@@ -303,8 +303,20 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     # Precompute per-fitted-vertex weights for offset influence groups.
     # In EVGF mode the exclusive groups carry their own influence sliders;
     # in Full Mesh Fit mode the offset_groups list is used instead.
+
+    # Build VG membership cache: {vg_idx: set(fitted vis)} for all vertex groups.
+    # Eliminates O(V×G) RNA iteration in both proximity and offset group functions.
+    fitted_set_vg = set(fitted_indices)
+    vg_membership = {}
+    for v in cloth.data.vertices:
+        if v.index not in fitted_set_vg:
+            continue
+        for g in v.groups:
+            if g.weight > 0.0:
+                vg_membership.setdefault(g.group, set()).add(v.index)
+
     offset_group_weights = state._compute_offset_group_weights(
-        cloth, source_groups, fitted_indices)
+        cloth, source_groups, fitted_indices, vg_membership=vg_membership)
 
     # Build a fitted-only edge adjacency dict.  Edges that cross the
     # preserve boundary are excluded so adaptive smoothing cannot bleed
@@ -325,7 +337,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
         cloth_adj[a].append(b)
         cloth_adj[b].append(a)
 
-    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj
+    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership
 
 
 def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,

@@ -35,6 +35,10 @@ _efit_updating = False
 # Cleared on every miss so stale keys never accumulate.
 _blocker_cache = {}
 
+# Cache for body BVH trees. Key: (obj.name, n_verts, n_polys).
+# Populated by S02 pipeline.py; cleared on addon unregister.
+_bvh_cache = {}
+
 
 def _mesh_poll(self, obj):
     """PointerProperty poll: restricts the eyedropper to mesh objects only."""
@@ -178,19 +182,31 @@ def _compute_proximity_weights(distances, fitted_indices, start, end, curve_key)
     Vertices beyond end receive weight 0.0 (no fit pull).
     Vertices between start and end are mapped through the selected curve.
     """
-    curve_fn = PROXIMITY_CURVES.get(curve_key, _proximity_curve_smooth)
     span = max(end - start, 0.0001)
 
     vi_arr   = np.array(fitted_indices, dtype=np.int32)
     dist_arr = np.array([distances.get(vi, 0.0) for vi in fitted_indices], dtype=np.float64)
     t_arr    = np.clip((dist_arr - start) / span, 0.0, 1.0)
-    w_arr    = np.vectorize(curve_fn)(t_arr)
+
+    if curve_key == 'LINEAR':
+        w_arr = 1.0 - t_arr
+    elif curve_key == 'SMOOTH':
+        s = 1.0 - t_arr
+        w_arr = s * s * (3.0 - 2.0 * s)
+    elif curve_key == 'SHARP':
+        w_arr = (1.0 - t_arr) ** 2
+    elif curve_key == 'ROOT':
+        w_arr = np.sqrt(np.maximum(0.0, 1.0 - t_arr))
+    else:
+        s = 1.0 - t_arr
+        w_arr = s * s * (3.0 - 2.0 * s)  # default: SMOOTH
+
     w_arr    = np.where(dist_arr <= start, 1.0, np.where(dist_arr >= end, 0.0, w_arr))
 
     return dict(zip(vi_arr.tolist(), w_arr.tolist()))
 
 
-def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_indices):
+def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_indices, vg_membership=None):
     """Return {vi: weight} for per-group proximity falloff.
 
     Each vertex group in proximity_groups applies its own start/end/curve settings
@@ -222,14 +238,18 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
         vg_idx = vg.index
 
         # Collect fitted vertices that belong to this group.
-        group_fitted = []
-        for v in cloth.data.vertices:
-            if v.index not in fitted_set:
-                continue
-            for g in v.groups:
-                if g.group == vg_idx and g.weight > 0.0:
-                    group_fitted.append(v.index)
-                    break
+        if vg_membership is not None and vg_idx in vg_membership:
+            group_fitted = [vi for vi in vg_membership[vg_idx] if vi in fitted_set]
+        else:
+            # Fallback: iterate vertices (used when no cache is available)
+            group_fitted = []
+            for v in cloth.data.vertices:
+                if v.index not in fitted_set:
+                    continue
+                for g in v.groups:
+                    if g.group == vg_idx and g.weight > 0.0:
+                        group_fitted.append(v.index)
+                        break
 
         if not group_fitted:
             continue
@@ -338,7 +358,7 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
     )
 
 
-def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
+def _compute_offset_group_weights(cloth, offset_groups, fitted_indices, vg_membership=None):
     """Return per-vertex weights for each offset group entry.
 
     Iterates v.groups to avoid try/except-as-flow-control overhead.
@@ -356,14 +376,25 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices):
         if vg is None:
             continue
         vg_idx  = vg.index
-        weights = {}
-        for v in cloth.data.vertices:
-            if v.index not in fitted_set:
-                continue
-            for g in v.groups:
-                if g.group == vg_idx and g.weight > 0.0:
-                    weights[v.index] = g.weight
-                    break
+        if vg_membership is not None and vg_idx in vg_membership:
+            weights = {}
+            for vi in vg_membership[vg_idx]:
+                if vi in fitted_set:
+                    # Only iterate the known members, not all vertices.
+                    v = cloth.data.vertices[vi]
+                    for g in v.groups:
+                        if g.group == vg_idx and g.weight > 0.0:
+                            weights[v.index] = g.weight
+                            break
+        else:
+            weights = {}
+            for v in cloth.data.vertices:
+                if v.index not in fitted_set:
+                    continue
+                for g in v.groups:
+                    if g.group == vg_idx and g.weight > 0.0:
+                        weights[v.index] = g.weight
+                        break
         if weights:
             offset_group_weights[og_name] = weights
     return offset_group_weights
