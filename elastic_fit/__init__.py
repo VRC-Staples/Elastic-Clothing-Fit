@@ -102,6 +102,7 @@ def _efit_session_cleanup_on_load(_):
     """
     state._efit_cache.clear()
     state._efit_originals.clear()
+    state._bvh_cache.clear()
     _collapse_all_panels()
 
 
@@ -221,6 +222,7 @@ def register():
 
 
 def unregister():
+    state._bvh_cache.clear()
     for name in ('tab_change', 'preview_prop_update', 'smooth_mod_update',
                  'offset_group_influence_update', 'offset_group_name_update',
                  'proximity_group_update', 'proximity_group_name_update'):

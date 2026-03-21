@@ -16,6 +16,24 @@ from .state import EFIT_PREFIX, _calc_subdivisions
 from .properties import _resolve_vg_name
 
 
+def _build_face_list(mesh_data):
+    """Build polygon vertex-index tuples via bulk foreach_get reads.
+
+    Returns list[tuple[int, ...]] as required by BVHTree.FromPolygons.
+    Replaces per-polygon Python generators ([tuple(f.vertices) for f in ...])
+    with three C-level bulk reads, which is significantly faster on dense meshes.
+    """
+    n_loops = len(mesh_data.loops)
+    n_polys = len(mesh_data.polygons)
+    loop_vi    = np.empty(n_loops, dtype=np.int32)
+    loop_start = np.empty(n_polys, dtype=np.int32)
+    loop_total = np.empty(n_polys, dtype=np.int32)
+    mesh_data.loops.foreach_get("vertex_index", loop_vi)
+    mesh_data.polygons.foreach_get("loop_start", loop_start)
+    mesh_data.polygons.foreach_get("loop_total", loop_total)
+    return [tuple(loop_vi[s:s+t]) for s, t in zip(loop_start, loop_total)]
+
+
 def _efit_save_originals(cloth):
     """Snapshot all vertex positions for undo and displacement math.
 
@@ -53,10 +71,10 @@ def _efit_create_proxy(context, cloth, p):
     for m in list(proxy.modifiers):
         proxy.modifiers.remove(m)
 
-    current_tris  = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
+    _lt = np.empty(len(proxy.data.polygons), dtype=np.int32)
+    proxy.data.polygons.foreach_get("loop_total", _lt)
+    current_tris  = int(np.sum(np.maximum(0, _lt - 2)))
     subdiv_levels = _calc_subdivisions(current_tris, p.proxy_triangles)
-
-    if subdiv_levels > 0:
         mod_sub = proxy.modifiers.new("_temp_subdiv", 'SUBSURF')
         mod_sub.levels             = subdiv_levels
         mod_sub.render_levels      = subdiv_levels
@@ -67,7 +85,9 @@ def _efit_create_proxy(context, cloth, p):
         context.view_layer.objects.active = proxy
         bpy.ops.object.modifier_apply(modifier=mod_sub.name)
 
-    actual_tris = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
+    _lt2 = np.empty(len(proxy.data.polygons), dtype=np.int32)
+    proxy.data.polygons.foreach_get("loop_total", _lt2)
+    actual_tris = int(np.sum(np.maximum(0, _lt2 - 2)))
     return proxy, actual_tris, subdiv_levels
 
 
@@ -237,7 +257,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
 
     Returns (cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj).
     """
-    proxy_faces = [tuple(f.vertices) for f in proxy.data.polygons]
+    proxy_faces = _build_face_list(proxy.data)
     bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)
     proxy_polys = proxy.data.polygons
 
@@ -269,9 +289,14 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     # Cache the nearest body-surface normal per fitted vertex.  The preview
     # engine uses these to apply offset-slider changes live without re-running
     # the full shrinkwrap.
-    body_faces   = [tuple(f.vertices) for f in body.data.polygons]
-    body_verts   = [v.co for v in body.data.vertices]
-    bvh_body     = BVHTree.FromPolygons(body_verts, body_faces)
+    body_key = (body.name, len(body.data.vertices), len(body.data.polygons))
+    bvh_body = state._bvh_cache.get(body_key)
+    if bvh_body is None:
+        body_faces = _build_face_list(body.data)
+        body_verts = [v.co for v in body.data.vertices]
+        bvh_body   = BVHTree.FromPolygons(body_verts, body_faces)
+        state._bvh_cache.clear()
+        state._bvh_cache[body_key] = bvh_body
 
     cloth_body_normals = {}
     cloth_body_distances = {}
