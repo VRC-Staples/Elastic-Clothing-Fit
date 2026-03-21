@@ -17,8 +17,8 @@ jobs:
       contents: write
 
     env:
-      BLENDER_VERSION: "4.2.9"
-      BLENDER_DIR: "blender-4.2.9-linux-x64"
+      BLENDER_VERSION: "4.2.19"
+      BLENDER_DIR: "blender-4.2.19-linux-x64"
 
     steps:
       - name: Checkout
