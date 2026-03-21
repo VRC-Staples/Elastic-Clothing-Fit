@@ -4,6 +4,7 @@
 # background, writes a one-shot Blender startup script, then relaunches Blender
 # so the startup script can reinstall the add-on automatically.
 
+import contextlib
 import gzip
 import hashlib
 import io
@@ -250,7 +251,9 @@ def _urlopen_with_retry(req_or_opener, req=None, timeout=10, max_retries=3):
                 return req_or_opener.open(req, timeout=timeout)
             else:
                 return urllib.request.urlopen(req_or_opener, timeout=timeout)
-        except Exception:
+        except urllib.error.URLError as exc:
+            if not isinstance(exc.reason, OSError):
+                raise
             if attempt == max_retries - 1:
                 raise
             time.sleep(2 ** attempt)
@@ -328,8 +331,8 @@ def _check_thread(use_nightly=False, dev_url_base='', blender_version=(0, 0, 0))
                 },
             )
             opener = urllib.request.build_opener(_AllowlistRedirectHandler)
-            resp = _urlopen_with_retry(opener, req=req, timeout=10)
-            raw = resp.read(MAX_JSON_BYTES + 1)
+            with contextlib.closing(_urlopen_with_retry(opener, req=req, timeout=10)) as resp:
+                raw = resp.read(MAX_JSON_BYTES + 1)
             if len(raw) > MAX_JSON_BYTES:
                 raise ValueError("Response too large")
             if resp.headers.get('Content-Encoding') == 'gzip':
@@ -532,7 +535,7 @@ def _download_thread(scripts_dir=''):
 
         downloaded         = 0
         _last_redraw_pct   = 0.0
-        with open(zip_path, 'wb') as fh:
+        with contextlib.closing(resp), open(zip_path, 'wb') as fh:
             while True:
                 chunk = resp.read(chunk_size)
                 if not chunk:
@@ -559,8 +562,6 @@ def _download_thread(scripts_dir=''):
                 if _state['progress'] - _last_redraw_pct >= 0.05:
                     _schedule_redraw()
                     _last_redraw_pct = _state['progress']
-
-        resp.close()
 
         # Verify SHA-256 against the hash embedded in the release notes.
         # If the release provides no hash, the download is rejected outright —
@@ -640,6 +641,7 @@ def install_and_restart(reopen_filepath=''):
         'zip_path':        install_zip,
         'script_path':     script_path,
         'reopen_filepath': reopen_filepath or '',
+        'expected_sha256': _state.get('expected_sha256'),
     }
     tmp_sidecar = sidecar_path + '.tmp'
     with open(tmp_sidecar, 'w', encoding='utf-8') as fh:

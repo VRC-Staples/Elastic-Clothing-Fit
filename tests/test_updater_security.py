@@ -316,3 +316,73 @@ class TestUpdaterSourceInvariants:
         assert idx_read  != -1, 'resp.read(MAX_JSON_BYTES + 1) not found'
         assert idx_check != -1, 'len(raw) > MAX_JSON_BYTES check not found'
         assert idx_read < idx_check, 'size check must follow the read call'
+
+
+# ---------------------------------------------------------------------------
+# T02 source invariants: HTTP hardening, contextlib.closing, retry narrowing
+# ---------------------------------------------------------------------------
+
+class TestT02SourceInvariants:
+    """Static source-code checks for T02 changes.
+
+    These tests inspect the actual updater.py source text at test-execution
+    time, catching any accidental revert of the T02 hardening.
+    """
+
+    @pytest.fixture(scope='class')
+    def source(self):
+        src_path = os.path.join(os.path.dirname(__file__), '..', 'elastic_fit', 'updater.py')
+        with open(src_path, encoding='utf-8') as f:
+            return f.read()
+
+    def test_import_contextlib_present(self, source):
+        assert 'import contextlib' in source
+
+    def test_contextlib_closing_in_download_thread(self, source):
+        """_download_thread must use contextlib.closing to wrap the response."""
+        assert 'contextlib.closing(resp)' in source
+
+    def test_contextlib_closing_in_fetch(self, source):
+        """_check_thread._fetch must use contextlib.closing to wrap the response."""
+        assert 'contextlib.closing(_urlopen_with_retry' in source
+
+    def test_no_bare_resp_close_after_chunk_loop(self, source):
+        """The manual resp.close() after the chunk loop must be gone."""
+        # After the with open(zip_path, 'wb') block the source must NOT have
+        # a bare 'resp.close()' line (closure is now handled by contextlib.closing).
+        # We check that there's no "resp.close()" in _download_thread beyond what
+        # contextlib.closing already handles.
+        # Since contextlib.closing is present and the explicit call was removed,
+        # 'resp.close()' should NOT appear as a standalone statement.
+        lines = source.splitlines()
+        bare_close_lines = [
+            i + 1 for i, ln in enumerate(lines)
+            if ln.strip() == 'resp.close()'
+        ]
+        assert bare_close_lines == [], (
+            f'Bare resp.close() found at lines {bare_close_lines} — '
+            f'should be handled by contextlib.closing'
+        )
+
+    def test_retry_narrowed_to_url_error(self, source):
+        """_urlopen_with_retry must catch urllib.error.URLError, not bare Exception."""
+        assert 'except urllib.error.URLError as exc:' in source
+
+    def test_retry_non_os_error_re_raises(self, source):
+        """Non-OSError URLError must re-raise immediately (no retry)."""
+        assert 'if not isinstance(exc.reason, OSError):' in source
+        assert 'raise' in source
+
+    def test_no_bare_except_exception_in_retry(self, source):
+        """The old broad 'except Exception:' must be gone from _urlopen_with_retry."""
+        # Find the function definition and verify it doesn't contain 'except Exception:'
+        start = source.find('def _urlopen_with_retry(')
+        end   = source.find('\ndef ', start + 1)  # next function definition
+        retry_body = source[start:end]
+        assert 'except Exception:' not in retry_body, (
+            'Broad except Exception: still present in _urlopen_with_retry'
+        )
+
+    def test_sidecar_data_includes_expected_sha256(self, source):
+        """install_and_restart sidecar_data must include expected_sha256 field."""
+        assert "'expected_sha256': _state.get('expected_sha256')" in source
