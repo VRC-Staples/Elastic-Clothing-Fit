@@ -249,7 +249,12 @@ def check_for_update():
 
     Updates _state and schedules a panel redraw when done.
     Re-entry guarded: a second call while a check is in-flight is a no-op.
+    No-op in headless/background mode: bpy.ops.wm.open_mainfile() discards the
+    Python environment while the thread is live, causing a use-after-free crash
+    in CPython's GC. Background Blender has no update panel to show anyway.
     """
+    if bpy.app.background:
+        return
     global _active_check_thread
     if _active_check_thread is not None and _active_check_thread.is_alive():
         return
@@ -437,7 +442,10 @@ def download_and_prepare():
     Updates _state['progress'] as the download proceeds and schedules
     panel redraws so the user sees a live percentage.
     Re-entry guarded: a second call while a download is in-flight is a no-op.
+    No-op in headless/background mode for the same reason as check_for_update.
     """
+    if bpy.app.background:
+        return
     global _active_download_thread
     if _active_download_thread is not None and _active_download_thread.is_alive():
         return
