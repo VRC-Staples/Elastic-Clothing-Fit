@@ -289,22 +289,30 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
     vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
     N = len(fitted_indices)
 
+    # Pre-build COO edge index arrays for vectorised gradient computation.
+    # Each undirected edge (i, ni_pos) where ni_pos > i is stored once.
+    # np.maximum.at on both src_rows and dst_rows ensures both endpoints
+    # get their gradient updated without needing the edge twice.
+    _src, _dst = [], []
+    for i, vi in enumerate(fitted_indices):
+        for ni in cloth_adj[vi]:
+            ni_pos = vi_to_pos.get(ni)
+            if ni_pos is not None and ni_pos > i:  # each undirected edge once
+                _src.append(i)
+                _dst.append(ni_pos)
+    src_rows = np.array(_src, dtype=np.int32)
+    dst_rows = np.array(_dst, dtype=np.int32)
+    has_edges = len(src_rows) > 0
+
     for _pass in range(ds_passes):
         # --- Gradient computation (max distance to any fitted neighbor) ---
+        # Vectorised: batch norm over all edges, scatter max to both endpoints.
         gradient = np.zeros(N, dtype=np.float64)
-        for i, vi in enumerate(fitted_indices):
-            neighbors = cloth_adj[vi]
-            if not neighbors:
-                continue
-            max_diff = 0.0
-            for ni in neighbors:
-                ni_pos = vi_to_pos.get(ni)
-                if ni_pos is None:
-                    continue
-                diff = np.linalg.norm(smoothed_arr[i] - smoothed_arr[ni_pos])
-                if diff > max_diff:
-                    max_diff = diff
-            gradient[i] = max_diff
+        if has_edges:
+            diffs = smoothed_arr[src_rows] - smoothed_arr[dst_rows]
+            norms = np.sqrt((diffs ** 2).sum(axis=1))
+            np.maximum.at(gradient, src_rows, norms)
+            np.maximum.at(gradient, dst_rows, norms)
 
         # --- Median threshold (np.median replaces statistics.median) ---
         median_grad = float(np.median(gradient))
