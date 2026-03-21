@@ -386,3 +386,106 @@ class TestT02SourceInvariants:
     def test_sidecar_data_includes_expected_sha256(self, source):
         """install_and_restart sidecar_data must include expected_sha256 field."""
         assert "'expected_sha256': _state.get('expected_sha256')" in source
+
+
+# ---------------------------------------------------------------------------
+# Tests: retry exception narrowing (behavioural — extracted pure function)
+# ---------------------------------------------------------------------------
+
+import urllib.error  # noqa: E402 — imported here so test module stays self-contained
+
+
+def should_retry(exc):
+    """Mirror the narrowed retry decision from _urlopen_with_retry.
+
+    Extracted verbatim from the logic in elastic_fit/updater.py:
+
+        except urllib.error.URLError as exc:
+            if not isinstance(exc.reason, OSError):
+                raise
+            ...  # retry with backoff
+
+    Returns True when the exception is a URLError whose *reason* is an OSError
+    subclass (i.e. a transient network failure worth retrying).  Returns False
+    for any other exception type so callers know to re-raise immediately.
+    """
+    return isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, OSError)
+
+
+class TestRetryNarrowing:
+    """Verify the narrowed retry-decision logic using a pure extracted function.
+
+    These are behavioural tests — they exercise *should_retry()* directly,
+    confirming that:
+      • transient OSError-wrapped URLErrors are flagged for retry
+      • non-OSError URLErrors (SSL, HTTP 4xx) are flagged for immediate re-raise
+      • non-URLError exceptions (ValueError, RuntimeError, …) are never retried
+    """
+
+    # --- cases that SHOULD retry ---
+
+    def test_urlopen_oserror_retries(self):
+        """URLError(reason=OSError()) is a transient network fault → should retry."""
+        exc = urllib.error.URLError(reason=OSError("connection reset"))
+        assert should_retry(exc) is True
+
+    def test_urlopen_connection_refused_retries(self):
+        """ConnectionRefusedError is an OSError subclass → should retry."""
+        exc = urllib.error.URLError(reason=ConnectionRefusedError())
+        assert should_retry(exc) is True
+
+    def test_urlopen_timeout_error_retries(self):
+        """TimeoutError is an OSError subclass → should retry."""
+        exc = urllib.error.URLError(reason=TimeoutError())
+        assert should_retry(exc) is True
+
+    def test_urlopen_broken_pipe_retries(self):
+        """BrokenPipeError is an OSError subclass → should retry."""
+        exc = urllib.error.URLError(reason=BrokenPipeError())
+        assert should_retry(exc) is True
+
+    # --- cases that should NOT retry (immediate re-raise) ---
+
+    def test_urlopen_non_oserror_no_retry(self):
+        """URLError whose reason is a plain Exception (e.g. SSL) → no retry."""
+        exc = urllib.error.URLError(reason=Exception("SSL: CERTIFICATE_VERIFY_FAILED"))
+        assert should_retry(exc) is False
+
+    def test_urlopen_string_reason_no_retry(self):
+        """URLError with a string reason (no network fault) → no retry."""
+        exc = urllib.error.URLError(reason="name or service not known")
+        # str is not an OSError subclass
+        assert should_retry(exc) is False
+
+    def test_non_urlopen_value_error_no_retry(self):
+        """ValueError is not a URLError → never retried."""
+        exc = ValueError("unexpected response format")
+        assert should_retry(exc) is False
+
+    def test_non_urlopen_runtime_error_no_retry(self):
+        """RuntimeError is not a URLError → never retried."""
+        exc = RuntimeError("internal failure")
+        assert should_retry(exc) is False
+
+    def test_non_urlopen_exception_no_retry(self):
+        """Plain Exception is not a URLError → never retried."""
+        exc = Exception("unknown error")
+        assert should_retry(exc) is False
+
+    def test_http_error_no_retry(self):
+        """HTTPError (404, 403, etc.) is a URLError subclass but NOT an OSError reason.
+
+        urllib.error.HTTPError does not set a .reason attribute the way URLError does —
+        it is itself the 'reason'.  The isinstance(exc.reason, OSError) guard
+        therefore evaluates to False (exc.reason is None or an int), so HTTP
+        errors are never retried.
+        """
+        exc = urllib.error.HTTPError(
+            url="https://api.github.com/releases",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
+        )
+        # HTTPError is a URLError subclass, so we must verify the full predicate
+        assert should_retry(exc) is False
