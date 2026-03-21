@@ -338,8 +338,9 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     # In EVGF mode the exclusive groups carry their own influence sliders;
     # in Full Mesh Fit mode the offset_groups list is used instead.
 
-    # Build VG membership cache: {vg_idx: set(fitted vis)} for all vertex groups.
-    # Eliminates O(V×G) RNA iteration in both proximity and offset group functions.
+    # Build VG membership cache: {vg_idx: {vi: weight}} for all vertex groups.
+    # Stores weights at build time so _compute_offset_group_weights can do a
+    # single-pass dict comprehension with zero additional RNA reads (C2 fix).
     fitted_set_vg = set(fitted_indices)
     vg_membership = {}
     for v in cloth.data.vertices:
@@ -347,7 +348,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             continue
         for g in v.groups:
             if g.weight > 0.0:
-                vg_membership.setdefault(g.group, set()).add(v.index)
+                vg_membership.setdefault(g.group, {})[v.index] = g.weight
 
     offset_group_weights = state._compute_offset_group_weights(
         cloth, source_groups, fitted_indices, vg_membership=vg_membership)

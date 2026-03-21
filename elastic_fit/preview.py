@@ -272,6 +272,7 @@ def _on_offset_group_name_update(self, context):
     fitted_indices = state._efit_cache.get('fitted_indices', [])
     p = context.scene.efit_props
     # Build VG membership inline (non-hot-path: only fires on group name change).
+    # {vg_idx: {vi: weight}} — weight stored at build time for offset group fast-path.
     fitted_set = state._efit_cache.get('fitted_set') or set(fitted_indices)
     vg_membership = {}
     for v in cloth.data.vertices:
@@ -279,7 +280,7 @@ def _on_offset_group_name_update(self, context):
             continue
         for g in v.groups:
             if g.weight > 0.0:
-                vg_membership.setdefault(g.group, set()).add(v.index)
+                vg_membership.setdefault(g.group, {})[v.index] = g.weight
     state._efit_cache['vg_membership'] = vg_membership
     state._efit_cache['offset_group_weights'] = state._compute_offset_group_weights(
         cloth, p.offset_groups, fitted_indices, vg_membership=vg_membership)

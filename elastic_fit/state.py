@@ -393,15 +393,9 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices, vg_membe
             continue
         vg_idx  = vg.index
         if vg_membership is not None and vg_idx in vg_membership:
-            weights = {}
-            for vi in vg_membership[vg_idx]:
-                if vi in fitted_set:
-                    # Only iterate the known members, not all vertices.
-                    v = cloth.data.vertices[vi]
-                    for g in v.groups:
-                        if g.group == vg_idx and g.weight > 0.0:
-                            weights[v.index] = g.weight
-                            break
+            # Fast-path: weights already stored at build time — zero RNA reads.
+            weights = {vi: w for vi, w in vg_membership[vg_idx].items()
+                       if vi in fitted_set}
         else:
             weights = {}
             for v in cloth.data.vertices:
