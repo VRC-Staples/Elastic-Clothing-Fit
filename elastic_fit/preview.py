@@ -173,17 +173,15 @@ def _efit_preview_update(context):
 
 
 def _on_tab_change(self, context):
-    """Sync fit_mode when the user switches UI tabs."""
-    if state._efit_updating:
-        return
-    state._efit_updating = True
-    try:
-        if self.ui_tab == 'FULL':
-            self.fit_mode = 'FULL'
-        elif self.ui_tab == 'EXCLUSIVE':
-            self.fit_mode = 'EXCLUSIVE'
-    finally:
-        state._efit_updating = False
+    """Called when the user switches UI tabs.
+
+    Previously this synced fit_mode to the tab, but fit_mode is now exclusively
+    controlled by the use_exclusive_mode toggle (_on_exclusive_mode_toggle in
+    properties.py). Switching tabs must never alter fit_mode or use_exclusive_mode.
+    This handler is kept for future tab-change side-effects (e.g. cancelling an
+    in-progress preview when leaving the Fit tab).
+    """
+    pass
 
 
 def _on_preview_prop_update(self, context):

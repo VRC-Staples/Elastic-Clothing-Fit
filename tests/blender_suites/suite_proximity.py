@@ -36,7 +36,7 @@ if _blend_root is None:
 
 BLEND_PATH    = os.path.join(_blend_root, "tests", "ECF_Test3.blend")
 BODY_NAME     = "Body"
-CLOTHING_NAME = "outfit"
+CLOTHING_NAME = "Outfit"
 
 # ---- failure counter ----
 _failed = 0
