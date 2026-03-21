@@ -18,12 +18,6 @@ import os as _os
 # Blender headless scripts — excluded from pytest collection because they import bpy.
 # Add entries here whenever a new Blender script is placed in tests/.
 collect_ignore = [
-    _os.path.join(_os.path.dirname(__file__), "test_fit_pipeline.py"),
-    _os.path.join(_os.path.dirname(__file__), "test_ux_tabs.py"),
-    _os.path.join(_os.path.dirname(__file__), "test_proximity.py"),
-    _os.path.join(_os.path.dirname(__file__), "test_armature_tools.py"),
-    _os.path.join(_os.path.dirname(__file__), "test_mesh_tools.py"),
-    _os.path.join(_os.path.dirname(__file__), "test_proxy_hull.py"),
     _os.path.join(_os.path.dirname(__file__), "test_deployment_install.py"),
     _os.path.join(_os.path.dirname(__file__), "test_deployment_phase1.py"),
     _os.path.join(_os.path.dirname(__file__), "test_deployment_phase2.py"),

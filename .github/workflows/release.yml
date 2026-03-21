@@ -65,6 +65,9 @@ jobs:
           BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
           xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
 
+      - name: Static analysis — updater thread safety
+        run: python tests/verify_updater.py
+
       - name: Read bl_info version and compute SHA-256
         id: meta
         run: |

@@ -146,13 +146,12 @@ for curve in curves:
     current = state._efit_cache.get('proximity_weights') or {}
     current_vals = tuple(sorted(current.values()))
 
+    _assert_true(len(current) > 0, f"curve={curve!r} weights non-empty ({len(current)} entries)")
+    _assert_all_in_range(current, 0.0, 1.0, f"curve={curve!r} weights all in [0, 1]")
+
     if prev_weights is not None:
-        _assert_true(True, f"curve={curve!r} weights computed ({len(current)} entries)")
-        # Note: different curves *should* produce different weights for the same distances,
-        # but if all distances are 0 the weights may all be 1.0 regardless of curve.
-        # We only assert that weights are present, not that they differ.
-    else:
-        _assert_true(len(current) > 0, f"curve={curve!r} weights non-empty")
+        differs = current_vals != prev_weights
+        _assert_true(differs, f"curve={curve!r} weights differ from previous curve")
 
     prev_weights = current_vals
     print(f"    {curve}: min={min(current.values(), default=0):.4f}, max={max(current.values(), default=0):.4f}")
@@ -174,7 +173,6 @@ else:
 
     after_narrow = [v.co.copy() for v in cloth.data.vertices]
     moved_narrow = sum(1 for a, b in zip(before, after_narrow) if (a - b).length > 1e-6)
-    _assert_true(True, f"proximity_end=0.001: {moved_narrow} vertices changed")
 
     # Wide range -- full effect on all vertices.
     p.proximity_start = 0.0
@@ -183,6 +181,8 @@ else:
     after_wide = [v.co.copy() for v in cloth.data.vertices]
     moved_wide = sum(1 for a, b in zip(after_narrow, after_wide) if (a - b).length > 1e-6)
     _assert_true(moved_wide > 0, f"widening range moved at least one vertex ({moved_wide} moved)")
+    _assert_true(moved_wide > moved_narrow,
+                 f"wide range moves more vertices than narrow ({moved_wide} > {moved_narrow})")
 
     # Restore to reasonable defaults.
     p.proximity_start = 0.0

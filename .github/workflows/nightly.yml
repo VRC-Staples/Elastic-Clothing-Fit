@@ -68,6 +68,9 @@ jobs:
           BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
           xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build --nightly
 
+      - name: Static analysis — updater thread safety
+        run: python tests/verify_updater.py
+
       - name: Publish rolling nightly release
         if: success() && matrix.primary
         env:
