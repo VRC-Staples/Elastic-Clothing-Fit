@@ -18,10 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - blender_version: "5.1.0"
+            blender_dir: "blender-5.1.0-linux-x64"
+            url_subdir: "Blender5.1"
+            primary: true    # only the primary entry publishes the release
           - blender_version: "4.2.19"
             blender_dir: "blender-4.2.19-linux-x64"
             url_subdir: "Blender4.2"
-            primary: true    # only the primary entry publishes the release
+            primary: false
           - blender_version: "3.6.23"
             blender_dir: "blender-3.6.23-linux-x64"
             url_subdir: "Blender3.6"

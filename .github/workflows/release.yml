@@ -17,8 +17,8 @@ jobs:
       contents: write
 
     env:
-      BLENDER_VERSION: "4.2.19"
-      BLENDER_DIR: "blender-4.2.19-linux-x64"
+      BLENDER_VERSION: "5.1.0"
+      BLENDER_DIR: "blender-5.1.0-linux-x64"
 
     steps:
       - name: Checkout
@@ -53,7 +53,7 @@ jobs:
         run: |
           mkdir -p ~/blender-cache
           cd ~/blender-cache
-          curl -L -O "https://download.blender.org/release/Blender4.2/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          curl -L -O "https://download.blender.org/release/Blender5.1/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
           tar -xJf "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
           rm "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
 
