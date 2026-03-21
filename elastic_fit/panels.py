@@ -403,9 +403,31 @@ def _draw_update_tab(layout, context):
 # Tab content functions
 # ---------------------------------------------------------------------------
 
+def _draw_exclusive_mode_warning(layout):
+    """Warning box shown when exclusive vertex group mode is active."""
+    warn       = layout.box()
+    warn.alert = True
+    warn.label(text="Vertex Group Mode Active", icon='INFO')
+    warn.label(text="Only vertices in the listed groups")
+    warn.label(text="will be moved by the fit.")
+
+
 def _full_tab(layout, p, in_preview):
     _draw_mesh_pickers(layout, p, in_preview)
     _draw_blocker_warnings(layout, p)
+
+    # Exclusive mode toggle — sits between pickers and action buttons.
+    layout.separator()
+    row         = layout.row(align=True)
+    row.enabled = not in_preview
+    row.prop(p, "use_exclusive_mode", toggle=True, icon='GROUP_VERTEX')
+
+    is_exclusive = p.fit_mode == 'EXCLUSIVE'
+
+    if is_exclusive:
+        _draw_exclusive_mode_warning(layout)
+        _draw_exclusive_groups(layout, p, in_preview)
+
     _draw_action_buttons(layout, p, in_preview)
 
     layout.separator()
@@ -414,24 +436,10 @@ def _full_tab(layout, p, in_preview):
         _section(layout, p, 'show_fit_settings',          _draw_fit_settings,          p, in_preview)
         _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p, in_preview)
         _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
-        _section(layout, p, 'show_preserve_group',         _draw_preserve_group,        p)
+        if not is_exclusive:
+            _section(layout, p, 'show_preserve_group',    _draw_preserve_group,        p)
         _section(layout, p, 'show_offset_fine_tuning',    _draw_offset_fine_tuning,    p, in_preview)
         _section(layout, p, 'show_misc',                  _draw_misc,                  p)
-
-
-def _exclusive_tab(layout, p, in_preview):
-    _draw_mesh_pickers(layout, p, in_preview)
-    _draw_blocker_warnings(layout, p)
-    _draw_exclusive_groups(layout, p, in_preview)
-    _draw_action_buttons(layout, p, in_preview)
-
-    layout.separator()
-
-    if _collapsible(layout, p, 'show_advanced'):
-        _section(layout, p, 'show_fit_settings',           _draw_fit_settings,          p, in_preview)
-        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p, in_preview)
-        _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
-        _section(layout, p, 'show_misc',                   _draw_misc,                  p)
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +467,6 @@ class SVRC_PT_elastic_fit(Panel):
 
         if p.ui_tab == 'FULL':
             _full_tab(layout, p, in_preview)
-        elif p.ui_tab == 'EXCLUSIVE':
-            _exclusive_tab(layout, p, in_preview)
         elif p.ui_tab == 'TOOLS':
             _tools_tab(layout, p)
         elif p.ui_tab == 'UPDATE':

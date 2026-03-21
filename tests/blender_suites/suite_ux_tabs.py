@@ -72,24 +72,61 @@ import bpy
 p = bpy.context.scene.efit_props
 
 print("\n=== STEP 1: Verify defaults ===")
-_assert_equal(type(p).bl_rna.properties['ui_tab'].default,   'FULL', "ui_tab default is FULL")
-_assert_equal(type(p).bl_rna.properties['fit_mode'].default, 'FULL', "fit_mode default is FULL")
+_assert_equal(type(p).bl_rna.properties['ui_tab'].default,          'FULL',  "ui_tab default is FULL")
+_assert_equal(type(p).bl_rna.properties['fit_mode'].default,        'FULL',  "fit_mode default is FULL")
+_assert_equal(type(p).bl_rna.properties['use_exclusive_mode'].default, False, "use_exclusive_mode default is False")
 
-print("\n=== STEP 2: Switch to EXCLUSIVE tab ===")
-p.ui_tab = 'EXCLUSIVE'
-_assert_equal(p.ui_tab,   'EXCLUSIVE', "ui_tab is EXCLUSIVE")
-_assert_equal(p.fit_mode, 'EXCLUSIVE', "fit_mode synced to EXCLUSIVE")
+print("\n=== STEP 2: Verify EXCLUSIVE tab no longer exists ===")
+tab_items = [item.identifier for item in type(p).bl_rna.properties['ui_tab'].enum_items]
+_assert_true('EXCLUSIVE' not in tab_items, f"EXCLUSIVE not in ui_tab enum items {tab_items}")
+_assert_true('FULL'   in tab_items, "FULL tab still present")
+_assert_true('TOOLS'  in tab_items, "TOOLS tab still present")
+_assert_true('UPDATE' in tab_items, "UPDATE tab still present")
+_assert_equal(len(tab_items), 3, "ui_tab has exactly 3 items (FULL, TOOLS, UPDATE)")
 
-print("\n=== STEP 3: Switch to UPDATE tab ===")
+print("\n=== STEP 3: use_exclusive_mode toggle syncs fit_mode ===")
+# Confirm starting state.
+p.use_exclusive_mode = False
+p.fit_mode           = 'FULL'
+_assert_equal(p.use_exclusive_mode, False,    "use_exclusive_mode starts False")
+_assert_equal(p.fit_mode,           'FULL',   "fit_mode starts FULL")
+
+# Enable exclusive mode via the toggle.
+p.use_exclusive_mode = True
+_assert_equal(p.use_exclusive_mode, True,       "use_exclusive_mode set to True")
+_assert_equal(p.fit_mode,           'EXCLUSIVE', "fit_mode synced to EXCLUSIVE when toggle enabled")
+
+# Disable exclusive mode via the toggle.
+p.use_exclusive_mode = False
+_assert_equal(p.use_exclusive_mode, False,  "use_exclusive_mode set back to False")
+_assert_equal(p.fit_mode,           'FULL', "fit_mode synced back to FULL when toggle disabled")
+
+print("\n=== STEP 4: Switching tabs does not alter use_exclusive_mode or fit_mode ===")
+# Start in exclusive mode on the Fit tab.
+p.ui_tab             = 'FULL'
+p.use_exclusive_mode = True
+_assert_equal(p.fit_mode, 'EXCLUSIVE', "fit_mode is EXCLUSIVE before tab switch")
+
+# Switch to TOOLS — fit_mode must be unchanged.
+p.ui_tab = 'TOOLS'
+_assert_equal(p.ui_tab,             'TOOLS',     "ui_tab set to TOOLS")
+_assert_equal(p.fit_mode,           'EXCLUSIVE', "fit_mode unchanged when switching to TOOLS")
+_assert_equal(p.use_exclusive_mode, True,        "use_exclusive_mode unchanged when switching to TOOLS")
+
+# Switch to UPDATE — same check.
 p.ui_tab = 'UPDATE'
-_assert_equal(p.ui_tab, 'UPDATE', "ui_tab is UPDATE")
-# fit_mode should be unchanged (UPDATE does not map to a fit_mode)
-_assert_equal(p.fit_mode, 'EXCLUSIVE', "fit_mode unchanged when switching to UPDATE")
+_assert_equal(p.ui_tab,             'UPDATE',    "ui_tab set to UPDATE")
+_assert_equal(p.fit_mode,           'EXCLUSIVE', "fit_mode unchanged when switching to UPDATE")
+_assert_equal(p.use_exclusive_mode, True,        "use_exclusive_mode unchanged when switching to UPDATE")
 
-print("\n=== STEP 4: Switch back to FULL tab ===")
+# Return to FULL — toggle and fit_mode should still reflect exclusive.
 p.ui_tab = 'FULL'
-_assert_equal(p.ui_tab,   'FULL', "ui_tab is FULL")
-_assert_equal(p.fit_mode, 'FULL', "fit_mode synced back to FULL")
+_assert_equal(p.ui_tab,             'FULL',      "ui_tab back to FULL")
+_assert_equal(p.fit_mode,           'EXCLUSIVE', "fit_mode still EXCLUSIVE after returning to FULL tab")
+_assert_equal(p.use_exclusive_mode, True,        "use_exclusive_mode still True after returning to FULL tab")
+
+# Clean up.
+p.use_exclusive_mode = False
 
 print("\n=== STEP 5: Verify collapse toggles exist and respond ===")
 toggle_props = [

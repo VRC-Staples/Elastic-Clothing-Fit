@@ -21,6 +21,10 @@ from .state import _mesh_poll, _armature_poll
 def _on_tab_change(self, context):
     state.call_handler('tab_change', self, context)
 
+def _on_exclusive_mode_toggle(self, context):
+    """Sync use_exclusive_mode bool to the fit_mode enum."""
+    self.fit_mode = 'EXCLUSIVE' if self.use_exclusive_mode else 'FULL'
+
 def _on_preview_prop_update(self, context):
     state.call_handler('preview_prop_update', self, context)
 
@@ -196,10 +200,9 @@ class EFitProperties(PropertyGroup):
         name="Tab",
         description="Switch between fitting modes and the updater",
         items=[
-            ('FULL',      "Full Mesh Fit", "Fit the entire clothing mesh to the body"),
-            ('EXCLUSIVE', "Exclusive Fit", "Fit only selected vertex groups"),
-            ('TOOLS',     "Tools",         "Armature and mesh utilities"),
-            ('UPDATE',    "Update",        "Check for and install updates"),
+            ('FULL',   "Fit",    "Fit clothing to the body"),
+            ('TOOLS',  "Tools",  "Armature and mesh utilities"),
+            ('UPDATE', "Update", "Check for and install updates"),
         ],
         default='FULL',
         update=_on_tab_change,
@@ -352,6 +355,12 @@ class EFitProperties(PropertyGroup):
             ('EXCLUSIVE', "Exclusive Vertex Group Fit", "Fit only the selected vertex groups, leaving the rest of the mesh untouched"),
         ],
         default='FULL',
+    )
+    use_exclusive_mode: BoolProperty(
+        name="Vertex Group Mode",
+        description="Fit only the listed vertex groups instead of the full mesh. Vertices outside the listed groups will not be moved.",
+        default=False,
+        update=_on_exclusive_mode_toggle,
     )
     exclusive_groups: CollectionProperty(
         name="Exclusive Groups",

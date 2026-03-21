@@ -134,11 +134,12 @@ _assert_equal(p.ui_tab,   'TOOLS', "ui_tab set to TOOLS")
 # TOOLS does not map to a fit_mode value, so fit_mode must stay unchanged.
 _assert_equal(p.fit_mode, 'FULL', "fit_mode unchanged when switching to TOOLS")
 
-# Verify fit_mode syncing still works after leaving TOOLS.
-p.ui_tab = 'EXCLUSIVE'
-_assert_equal(p.fit_mode, 'EXCLUSIVE', "fit_mode syncs to EXCLUSIVE after leaving TOOLS")
-p.ui_tab = 'FULL'
-_assert_equal(p.fit_mode, 'FULL', "fit_mode syncs back to FULL")
+# Verify exclusive mode toggle works after leaving TOOLS.
+p.ui_tab             = 'FULL'
+p.use_exclusive_mode = True
+_assert_equal(p.fit_mode, 'EXCLUSIVE', "fit_mode syncs to EXCLUSIVE via use_exclusive_mode toggle")
+p.use_exclusive_mode = False
+_assert_equal(p.fit_mode, 'FULL', "fit_mode syncs back to FULL when toggle disabled")
 
 print("\n=== STEP 2 COMPLETE ===")
 

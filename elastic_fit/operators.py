@@ -306,8 +306,9 @@ class EFIT_OT_preview_apply(Operator):
             _restore_uvs(cloth.data, saved_uvs)
 
         state._efit_cache.clear()
-        p.fit_mode = 'FULL'
-        p.ui_tab   = 'FULL'
+        p.fit_mode           = 'FULL'
+        p.use_exclusive_mode = False
+        p.ui_tab             = 'FULL'
 
         bpy.ops.object.select_all(action='DESELECT')
         cloth.select_set(True)
@@ -360,8 +361,9 @@ class EFIT_OT_preview_cancel(Operator):
         if "_efit_originals" in cloth:
             del cloth["_efit_originals"]
         p = context.scene.efit_props
-        p.fit_mode = 'FULL'
-        p.ui_tab   = 'FULL'
+        p.fit_mode           = 'FULL'
+        p.use_exclusive_mode = False
+        p.ui_tab             = 'FULL'
         self.report({'INFO'}, "Fit cancelled. Clothing restored.")
         return {'FINISHED'}
 
@@ -449,7 +451,7 @@ class EFIT_OT_reset_defaults(Operator):
     def execute(self, context):
         p = context.scene.efit_props
         for prop_name in (
-            'fit_mode', 'ui_tab',
+            'fit_mode', 'use_exclusive_mode', 'ui_tab',
             'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs', 'use_proxy_hull',
             'smooth_factor', 'smooth_iterations',
             'post_laplacian', 'laplacian_factor', 'laplacian_iterations',
