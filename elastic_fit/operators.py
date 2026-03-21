@@ -174,7 +174,7 @@ class EFIT_OT_fit(Operator):
 
         # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership = \
+        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, proxy_bvh = \
             _efit_transfer_displacements(
                 cloth, proxy, proxy_pre, proxy_post, body, fitted_indices, source_groups)
 
@@ -211,9 +211,10 @@ class EFIT_OT_fit(Operator):
             _n    = len(cloth.data.vertices)
             _snap = np.empty(_n * 3, dtype=np.float64)
             cloth.data.vertices.foreach_get("co", _snap)
-            pre_offset_positions = {
-                vi: mathutils.Vector(_snap[vi*3:vi*3+3]) for vi in fitted_indices
-            }
+            _snap_3 = _snap.reshape(-1, 3)
+            _fi_arr = np.array(fitted_indices, dtype=np.int32)
+            _pos_arr = _snap_3[_fi_arr]
+            pre_offset_positions = {vi: _pos_arr[i] for i, vi in enumerate(fitted_indices)}
         else:
             pre_offset_positions = {}
 
@@ -245,6 +246,7 @@ class EFIT_OT_fit(Operator):
             'original_offset':      p.offset,
             'offset_group_weights': offset_group_weights,
             'vg_membership':        vg_membership,
+            'proxy_bvh':            proxy_bvh,
         }
 
         # Reselect clothing.

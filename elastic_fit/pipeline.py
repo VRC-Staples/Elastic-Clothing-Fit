@@ -174,15 +174,15 @@ def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):
         preserve_name = ""
     elif has_preserve:
         preserve_vg_idx = cloth.vertex_groups[preserve_name].index
+        n = len(cloth.data.vertices)
+        preserved_set = set()
         for v in cloth.data.vertices:
-            in_group = any(
-                g.group == preserve_vg_idx and g.weight > 0.0
-                for g in v.groups
-            )
-            if in_group:
-                preserved_indices.append(v.index)
-            else:
-                fitted_indices.append(v.index)
+            for g in v.groups:
+                if g.group == preserve_vg_idx and g.weight > 0.0:
+                    preserved_set.add(v.index)
+                    break
+        preserved_indices = sorted(preserved_set)
+        fitted_indices = [vi for vi in range(n) if vi not in preserved_set]
     else:
         fitted_indices = list(range(len(cloth.data.vertices)))
 
@@ -362,7 +362,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
         cloth_adj[a].append(b)
         cloth_adj[b].append(a)
 
-    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership
+    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, bvh
 
 
 def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
@@ -465,7 +465,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
 
         for _co, idx, dist in neighbors:
             ni    = fitted_indices[idx]
-            disp  = pre_offset_positions[ni] - all_originals[ni]
+            disp  = mathutils.Vector(pre_offset_positions[ni]) - all_originals[ni]
             w     = 1.0 / max(dist, 0.0001)
             total_disp   += disp * w
             total_weight += w

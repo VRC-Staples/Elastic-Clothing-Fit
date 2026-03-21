@@ -95,9 +95,10 @@ def _efit_preview_update(context):
         has_offset_work = bool(offset_group_weights and original_offset != 0.0)
         needs_preserve  = has_preserve and preserved_indices and p.follow_strength > 0.0
         if has_offset_work or needs_preserve:
-            pre_offset_positions = {
-                vi: mathutils.Vector(co_buf[vi*3:vi*3+3]) for vi in fitted_indices
-            }
+            _co_3 = co_buf.reshape(-1, 3)
+            _fi_arr = np.array(fitted_indices, dtype=np.int32)
+            _pos_arr = _co_3[_fi_arr]
+            pre_offset_positions = {vi: _pos_arr[i] for i, vi in enumerate(fitted_indices)}
         else:
             pre_offset_positions = {}
 
@@ -148,7 +149,7 @@ def _efit_preview_update(context):
                     total_weight = 0.0
                     for _co, idx, dist in neighbors:
                         ni    = fitted_indices[idx]
-                        disp  = current_positions[ni] - all_originals[ni]
+                        disp  = mathutils.Vector(current_positions[ni]) - all_originals[ni]
                         w     = 1.0 / max(dist, 0.0001)
                         total_disp   += disp * w
                         total_weight += w
