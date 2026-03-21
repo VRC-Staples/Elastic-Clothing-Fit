@@ -622,7 +622,7 @@ class EFIT_OT_download_update(Operator):
 
     @classmethod
     def poll(cls, context):
-        return updater.get_state()['status'] == 'available'
+        return updater.get_status() == 'available'
 
     def execute(self, context):
         updater.download_and_prepare()
@@ -638,7 +638,7 @@ class EFIT_OT_install_restart(Operator):
 
     @classmethod
     def poll(cls, context):
-        return updater.get_state()['status'] == 'ready'
+        return updater.get_status() == 'ready'
 
     def execute(self, context):
         p = context.scene.efit_props

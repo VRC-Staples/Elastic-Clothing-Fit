@@ -58,6 +58,17 @@ def get_state():
     return dict(_state)
 
 
+def get_status() -> str:
+    """Return the current status string directly from module state.
+
+    Avoids the dict allocation of get_state() when only the status key is
+    needed (e.g. operator poll methods called on every button render pass).
+    CPython dict key-lookup is atomic for string keys, so no lock is required
+    for this single-key read.
+    """
+    return _state['status']
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
