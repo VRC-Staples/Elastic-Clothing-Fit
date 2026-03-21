@@ -34,10 +34,21 @@ _state = {
     'expected_sha256':      None,  # hex SHA-256 parsed from release notes, or None
 }
 
+# Protects all multi-key _state write sequences from concurrent read/write tears.
+_state_lock = threading.Lock()
+
+# Module-level thread refs used to enforce re-entry guards.
+_active_check_thread    = None
+_active_download_thread = None
+
 
 def get_state():
-    """Return the module-level state dict (read-only reference for the panel)."""
-    return _state
+    """Return a snapshot copy of the module-level state dict.
+
+    Returns a shallow copy so that panel draw callbacks reading multiple keys
+    do not observe torn state written by a background thread.
+    """
+    return dict(_state)
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +183,47 @@ def check_for_update():
     """Spawn a background thread that queries the GitHub releases API.
 
     Updates _state and schedules a panel redraw when done.
+    Re-entry guarded: a second call while a check is in-flight is a no-op.
     """
-    _state['status']  = 'checking'
-    _state['error']   = ''
+    global _active_check_thread
+    if _active_check_thread is not None and _active_check_thread.is_alive():
+        return
+
+    # Read bpy.* values on the main thread before the thread starts.
+    try:
+        p            = bpy.context.scene.efit_props
+        use_nightly  = p.use_nightly_channel
+        dev_url_base = p.dev_update_url.strip() if _is_dev_mode() else ''
+    except Exception:
+        use_nightly  = False
+        dev_url_base = ''
+
+    blender_version = bpy.app.version
+
+    with _state_lock:
+        _state['status'] = 'checking'
+        _state['error']  = ''
     _schedule_redraw()
 
-    t = threading.Thread(target=_check_thread, daemon=True)
+    t = threading.Thread(
+        target=_check_thread,
+        kwargs={
+            'use_nightly':     use_nightly,
+            'dev_url_base':    dev_url_base,
+            'blender_version': blender_version,
+        },
+        daemon=True,
+    )
+    _active_check_thread = t
     t.start()
 
 
-def _check_thread():
-    """Background worker for check_for_update()."""
+def _check_thread(use_nightly=False, dev_url_base='', blender_version=(0, 0, 0)):
+    """Background worker for check_for_update().
+
+    All bpy.* accesses have been removed; values are passed as arguments by
+    the main-thread caller so this function is safe to run in a daemon thread.
+    """
     try:
         import urllib.request
         import json
@@ -197,15 +238,7 @@ def _check_thread():
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read().decode('utf-8'))
 
-        # --- read channel preference ---
-        try:
-            p            = bpy.context.scene.efit_props
-            use_nightly  = p.use_nightly_channel
-            dev_url_base = p.dev_update_url.strip() if _is_dev_mode() else ''
-        except Exception:
-            use_nightly  = False
-            dev_url_base = ''
-
+        # Build API URLs from pre-resolved channel preference
         if dev_url_base:
             _base        = dev_url_base.rstrip('/')
             releases_url = _base + '/repos/VRC-Staples/Elastic-Clothing-Fit/releases/latest'
@@ -222,8 +255,9 @@ def _check_thread():
             assets = data.get('assets', [])
             remote_version, zip_url, remote_ts = _parse_nightly_asset(assets)
             if remote_version is None or not zip_url:
-                _state['status'] = 'error'
-                _state['error']  = 'No nightly zip asset found'
+                with _state_lock:
+                    _state['status'] = 'error'
+                    _state['error']  = 'No nightly zip asset found'
                 _schedule_redraw()
                 return
             blender_min = _parse_blender_min(data.get('body', ''))
@@ -232,14 +266,16 @@ def _check_thread():
             data = _fetch(releases_url)
             tag_name = data.get('tag_name', '')
             if not tag_name:
-                _state['status'] = 'error'
-                _state['error']  = 'No releases found'
+                with _state_lock:
+                    _state['status'] = 'error'
+                    _state['error']  = 'No releases found'
                 _schedule_redraw()
                 return
             remote_version = _parse_version(tag_name)
             if remote_version is None:
-                _state['status'] = 'error'
-                _state['error']  = f'Could not parse version: {tag_name}'
+                with _state_lock:
+                    _state['status'] = 'error'
+                    _state['error']  = f'Could not parse version: {tag_name}'
                 _schedule_redraw()
                 return
             assets  = data.get('assets', [])
@@ -252,15 +288,17 @@ def _check_thread():
             blender_min = _parse_blender_min(data.get('body', ''))
 
         if not zip_url:
-            _state['status'] = 'error'
-            _state['error']  = 'No zip asset in release'
+            with _state_lock:
+                _state['status'] = 'error'
+                _state['error']  = 'No zip asset in release'
             _schedule_redraw()
             return
 
         valid_domains = _VALID_DOWNLOAD_DOMAINS + (('http://localhost',) if _is_dev_mode() else ())
         if not any(zip_url.startswith(d) for d in valid_domains):
-            _state['status'] = 'error'
-            _state['error']  = 'Unexpected download URL domain'
+            with _state_lock:
+                _state['status'] = 'error'
+                _state['error']  = 'Unexpected download URL domain'
             _schedule_redraw()
             return
 
@@ -268,21 +306,20 @@ def _check_thread():
         # Stored for post-download verification; None means no hash available.
         body = data.get('body', '') or ''
         sha256_match = _SHA256_RE.search(body)
-        _state['expected_sha256'] = sha256_match.group(1).lower() if sha256_match else None
 
-        _state['tag']     = tag_name
-        _state['version'] = remote_version
-        _state['url']     = zip_url
+        # Write all discovered metadata atomically — combines expected_sha256,
+        # tag, version, url, blender_min, and blender_blocked into one lock
+        # acquisition to prevent the panel from reading a partially-updated state.
+        with _state_lock:
+            _state['expected_sha256']    = sha256_match.group(1).lower() if sha256_match else None
+            _state['tag']                = tag_name
+            _state['version']            = remote_version
+            _state['url']                = zip_url
+            _state['blender_min']        = blender_min
+            _state['blender_min_required'] = blender_min
+            _state['blender_blocked']    = bool(blender_min and blender_version < blender_min)
 
-        # --- blender minimum version check ---
-        _state['blender_min']          = blender_min
-        _state['blender_min_required'] = blender_min
-        if blender_min and bpy.app.version < blender_min:
-            _state['blender_blocked'] = True
-        else:
-            _state['blender_blocked'] = False
-
-        # --- version comparison ---
+        # --- version comparison (single-key writes, no lock needed) ---
         if use_nightly:
             # When fetching nightly: compare semver first, then build timestamp
             # so multiple nightlies on the same day are handled correctly.
@@ -304,8 +341,9 @@ def _check_thread():
                 _state['status'] = 'up_to_date'
 
     except Exception as exc:
-        _state['status'] = 'error'
-        _state['error']  = str(exc)[:120]
+        with _state_lock:
+            _state['status'] = 'error'
+            _state['error']  = str(exc)[:120]
 
     _schedule_redraw()
 
@@ -319,28 +357,45 @@ def download_and_prepare():
 
     Updates _state['progress'] as the download proceeds and schedules
     panel redraws so the user sees a live percentage.
+    Re-entry guarded: a second call while a download is in-flight is a no-op.
     """
-    _state['status']   = 'downloading'
-    _state['progress'] = 0.0
-    _state['error']    = ''
+    global _active_download_thread
+    if _active_download_thread is not None and _active_download_thread.is_alive():
+        return
+
+    # Resolve bpy.* resource path on the main thread before the thread starts.
+    scripts_dir = bpy.utils.user_resource('SCRIPTS')
+
+    with _state_lock:
+        _state['status']   = 'downloading'
+        _state['progress'] = 0.0
+        _state['error']    = ''
     _schedule_redraw()
 
-    t = threading.Thread(target=_download_thread, daemon=True)
+    t = threading.Thread(
+        target=_download_thread,
+        kwargs={'scripts_dir': scripts_dir},
+        daemon=True,
+    )
+    _active_download_thread = t
     t.start()
 
 
-def _download_thread():
-    """Background worker for download_and_prepare()."""
+def _download_thread(scripts_dir=''):
+    """Background worker for download_and_prepare().
+
+    All bpy.* accesses have been removed; scripts_dir is passed as an argument
+    by the main-thread caller so this function is safe to run in a daemon thread.
+    """
     zip_path = ''
     try:
         import urllib.request
 
-        tag         = _state['tag']
-        url         = _state['url']
-        scripts_dir = bpy.utils.user_resource('SCRIPTS')
-        cache_dir   = os.path.join(scripts_dir, 'efit_update_cache')
+        tag       = _state['tag']
+        url       = _state['url']
+        cache_dir = os.path.join(scripts_dir, 'efit_update_cache')
         os.makedirs(cache_dir, exist_ok=True)
-        zip_path    = os.path.join(cache_dir, f'ElasticClothingFit-{tag}.zip')
+        zip_path  = os.path.join(cache_dir, f'ElasticClothingFit-{tag}.zip')
 
         req = urllib.request.Request(
             url,
@@ -352,10 +407,11 @@ def _download_thread():
 
         resp = _open(req)
 
-        total = int(resp.headers.get('Content-Length', 0) or 0)
+        total      = int(resp.headers.get('Content-Length', 0) or 0)
         chunk_size = 65536  # 64 KB
 
-        downloaded = 0
+        downloaded         = 0
+        _last_redraw_pct   = 0.0
         with open(zip_path, 'wb') as fh:
             while True:
                 chunk = resp.read(chunk_size)
@@ -365,7 +421,10 @@ def _download_thread():
                 downloaded += len(chunk)
                 if total > 0:
                     _state['progress'] = downloaded / total
-                _schedule_redraw()
+                # Throttle redraws to ≥5% progress increments to reduce UI thrash.
+                if _state['progress'] - _last_redraw_pct >= 0.05:
+                    _schedule_redraw()
+                    _last_redraw_pct = _state['progress']
 
         resp.close()
 
@@ -381,16 +440,18 @@ def _download_thread():
                     os.remove(zip_path)
                 except OSError:
                     pass
-                _state['status'] = 'error'
-                _state['error']  = 'SHA-256 mismatch -- download may be corrupt'
+                with _state_lock:
+                    _state['status'] = 'error'
+                    _state['error']  = 'SHA-256 mismatch -- download may be corrupt'
                 _schedule_redraw()
                 return
         else:
             print("[elastic_fit updater] No SHA-256 in release notes, skipping verification")
 
-        _state['zip_path'] = zip_path
-        _state['status']   = 'ready'
-        _state['progress'] = 1.0
+        with _state_lock:
+            _state['zip_path'] = zip_path
+            _state['status']   = 'ready'
+            _state['progress'] = 1.0
 
     except Exception as exc:
         # Clean up partial file.
@@ -399,8 +460,9 @@ def _download_thread():
                 os.remove(zip_path)
             except Exception:
                 pass
-        _state['status'] = 'error'
-        _state['error']  = str(exc)[:120]
+        with _state_lock:
+            _state['status'] = 'error'
+            _state['error']  = str(exc)[:120]
 
     _schedule_redraw()
 
@@ -420,8 +482,9 @@ def install_and_restart(reopen_filepath=''):
     """
     install_zip = _state.get('zip_path', '')
     if not install_zip or not os.path.isfile(install_zip):
-        _state['status'] = 'error'
-        _state['error']  = 'Downloaded zip not found'
+        with _state_lock:
+            _state['status'] = 'error'
+            _state['error']  = 'Downloaded zip not found'
         return
 
     startup_dir = os.path.join(bpy.utils.user_resource('SCRIPTS'), 'startup')
@@ -471,8 +534,9 @@ def install_and_restart(reopen_filepath=''):
             )
         subprocess.Popen([bpy.app.binary_path], **kwargs)
     except Exception as exc:
-        _state['status'] = 'error'
-        _state['error']  = f'Could not launch Blender: {exc}'
+        with _state_lock:
+            _state['status'] = 'error'
+            _state['error']  = f'Could not launch Blender: {exc}'
         # Remove the script so it does not run stale on a manual restart.
         try:
             os.remove(script_path)
