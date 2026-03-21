@@ -4,11 +4,15 @@
 # background, writes a one-shot Blender startup script, then relaunches Blender
 # so the startup script can reinstall the add-on automatically.
 
+import gzip
 import hashlib
+import io
+import json
 import os
 import re
 import sys
 import threading
+import time
 import subprocess
 import urllib.error
 import urllib.request
@@ -218,6 +222,28 @@ class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _urlopen_with_retry(req_or_opener, req=None, timeout=10, max_retries=3):
+    """Open a URL with exponential backoff retry.
+
+    Works with both plain ``urllib.request.urlopen`` calls (pass a Request
+    object as ``req_or_opener``) and opener.open calls (pass the opener as
+    ``req_or_opener`` and the Request as ``req``).
+
+    Retries up to *max_retries* times with exponential backoff: 1s, 2s, 4s …
+    Re-raises the last exception when all attempts are exhausted.
+    """
+    for attempt in range(max_retries):
+        try:
+            if req is not None:
+                return req_or_opener.open(req, timeout=timeout)
+            else:
+                return urllib.request.urlopen(req_or_opener, timeout=timeout)
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 ** attempt)
+
+
 def check_for_update():
     """Spawn a background thread that queries the GitHub releases API.
 
@@ -274,18 +300,22 @@ def _check_thread(use_nightly=False, dev_url_base='', blender_version=(0, 0, 0))
     the main-thread caller so this function is safe to run in a daemon thread.
     """
     try:
-        import json
-
         current = _get_current_version()
 
         def _fetch(url):
             req = urllib.request.Request(
                 url,
-                headers={'User-Agent': 'ElasticClothingFit-Updater'},
+                headers={
+                    'User-Agent': 'ElasticClothingFit-Updater',
+                    'Accept-Encoding': 'gzip',
+                },
             )
             opener = urllib.request.build_opener(_AllowlistRedirectHandler)
-            with opener.open(req, timeout=10) as resp:
-                return json.loads(resp.read().decode('utf-8'))
+            resp = _urlopen_with_retry(opener, req=req, timeout=10)
+            raw = resp.read()
+            if resp.headers.get('Content-Encoding') == 'gzip':
+                raw = gzip.decompress(raw)
+            return json.loads(raw.decode('utf-8'))
 
         # Build API URLs from pre-resolved channel preference
         if dev_url_base:
@@ -446,12 +476,20 @@ def _download_thread(scripts_dir=''):
 
         req = urllib.request.Request(
             url,
-            headers={'User-Agent': 'ElasticClothingFit-Updater'},
+            headers={
+                'User-Agent': 'ElasticClothingFit-Updater',
+                'Accept-Encoding': 'gzip',
+            },
         )
 
         def _open(req):
             opener = urllib.request.build_opener(_AllowlistRedirectHandler)
-            return opener.open(req, timeout=60)
+            resp = _urlopen_with_retry(opener, req=req, timeout=60)
+            if resp.headers.get('Content-Encoding') == 'gzip':
+                # Wrap the response so that resp.read(chunk_size) transparently
+                # decompresses — GzipFile expects a file-like object.
+                return gzip.GzipFile(fileobj=resp)
+            return resp
 
         resp = _open(req)
 
@@ -533,6 +571,11 @@ def install_and_restart(reopen_filepath=''):
     If reopen_filepath is provided the startup script will reopen that
     .blend file after the addon is installed.
 
+    Paths are serialised via a JSON sidecar file (_efit_update_paths.json)
+    written atomically with os.replace() — no path embedding in the script
+    source string.  The static template script reads the sidecar at timer
+    callback time (deferred), not at import time.
+
     Called on the main thread from the operator.
     """
     install_zip = _state.get('zip_path', '')
@@ -544,24 +587,34 @@ def install_and_restart(reopen_filepath=''):
 
     startup_dir = os.path.join(bpy.utils.user_resource('SCRIPTS'), 'startup')
     os.makedirs(startup_dir, exist_ok=True)
-    script_path = os.path.join(startup_dir, '_efit_pending_update.py')
+    script_path  = os.path.join(startup_dir, '_efit_pending_update.py')
+    sidecar_path = os.path.join(startup_dir, '_efit_update_paths.json')
 
-    # Build the startup script as a string.
-    # Use repr() for the paths so backslashes are safely escaped.
-    # GitHub-downloaded zips are deleted after install.
-    reopen_block = (
-        "\n"
-        "def _reopen():\n"
-        f"    bpy.ops.wm.open_mainfile(filepath={repr(reopen_filepath)})\n"
-        "\n"
-        "bpy.app.timers.register(_reopen, first_interval=3.5)\n"
-    ) if reopen_filepath else ""
+    # Write sidecar JSON atomically so the startup script never reads a
+    # half-written file.  Always include reopen_filepath (empty string if not
+    # reopening); the static template checks `if reopen_filepath:` at runtime.
+    sidecar_data = {
+        'zip_path':        install_zip,
+        'script_path':     script_path,
+        'reopen_filepath': reopen_filepath or '',
+    }
+    tmp_sidecar = sidecar_path + '.tmp'
+    with open(tmp_sidecar, 'w', encoding='utf-8') as fh:
+        json.dump(sidecar_data, fh)
+    os.replace(tmp_sidecar, sidecar_path)
+
+    # Static template — no f-string path interpolation, no dynamic path injection.
+    # Paths are loaded from the sidecar JSON at timer-callback time.
     script_src = (
-        "import bpy, os\n"
+        "import bpy, os, json\n"
         "\n"
         "def _run():\n"
-        f"    zip_path    = {repr(install_zip)}\n"
-        f"    script_path = {repr(script_path)}\n"
+        "    sidecar = os.path.join(os.path.dirname(__file__), '_efit_update_paths.json')\n"
+        "    with open(sidecar) as f:\n"
+        "        d = json.load(f)\n"
+        "    zip_path = d['zip_path']\n"
+        "    script_path = d['script_path']\n"
+        "    reopen_filepath = d.get('reopen_filepath', '')\n"
         "    if os.path.exists(zip_path):\n"
         "        bpy.ops.preferences.addon_install(overwrite=True, filepath=zip_path)\n"
         "        bpy.ops.preferences.addon_enable(module='elastic_fit')\n"
@@ -570,13 +623,36 @@ def install_and_restart(reopen_filepath=''):
         "        except: pass\n"
         "    try: os.remove(script_path)\n"
         "    except: pass\n"
+        "    try: os.remove(sidecar)\n"
+        "    except: pass\n"
+        "    if reopen_filepath:\n"
+        "        def _reopen():\n"
+        "            bpy.ops.wm.open_mainfile(filepath=reopen_filepath)\n"
+        "        bpy.app.timers.register(_reopen, first_interval=3.5)\n"
         "\n"
         "bpy.app.timers.register(_run, first_interval=2.0)\n"
-        f"{reopen_block}"
     )
 
-    with open(script_path, 'w', encoding='utf-8') as fh:
+    # Write startup script atomically.
+    tmp_script = script_path + '.tmp'
+    with open(tmp_script, 'w', encoding='utf-8') as fh:
         fh.write(script_src)
+    os.replace(tmp_script, script_path)
+
+    # Guard: verify Blender binary exists before attempting Popen.
+    if not os.path.isfile(bpy.app.binary_path):
+        with _state_lock:
+            _state['status'] = 'error'
+            _state['error']  = f'Blender binary not found: {bpy.app.binary_path}'
+        try:
+            os.remove(script_path)
+        except Exception:
+            pass
+        try:
+            os.remove(sidecar_path)
+        except Exception:
+            pass
+        return
 
     # Launch a new Blender instance then quit the current one.
     # On Windows, DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP prevent the child
@@ -592,9 +668,13 @@ def install_and_restart(reopen_filepath=''):
         with _state_lock:
             _state['status'] = 'error'
             _state['error']  = f'Could not launch Blender: {exc}'
-        # Remove the script so it does not run stale on a manual restart.
+        # Remove the script and sidecar so they do not run stale on a manual restart.
         try:
             os.remove(script_path)
+        except Exception:
+            pass
+        try:
+            os.remove(sidecar_path)
         except Exception:
             pass
         return
