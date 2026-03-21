@@ -75,6 +75,8 @@ def _efit_create_proxy(context, cloth, p):
     proxy.data.polygons.foreach_get("loop_total", _lt)
     current_tris  = int(np.sum(np.maximum(0, _lt - 2)))
     subdiv_levels = _calc_subdivisions(current_tris, p.proxy_triangles)
+
+    if subdiv_levels > 0:
         mod_sub = proxy.modifiers.new("_temp_subdiv", 'SUBSURF')
         mod_sub.levels             = subdiv_levels
         mod_sub.render_levels      = subdiv_levels
