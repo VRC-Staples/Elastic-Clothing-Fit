@@ -11,9 +11,6 @@ elastic_fit/_dev_mode
 artifacts/
 mock-update-server.ps1
 dev-install.ps1
-
-# ── GSD baseline (auto-generated) ──
-.DS_Store
 Thumbs.db
 *.swp
 *.swo
@@ -38,3 +35,7 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# ── GSD baseline (auto-generated) ──
+.gsd
+.DS_Store

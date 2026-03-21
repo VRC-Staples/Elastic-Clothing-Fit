@@ -11,7 +11,7 @@ from bpy.props import (
     PointerProperty, FloatProperty, IntProperty, BoolProperty,
     EnumProperty, CollectionProperty, StringProperty,
 )
-from bpy.types import PropertyGroup
+from bpy.types import AddonPreferences, PropertyGroup
 
 from . import state
 from .state import _mesh_poll, _armature_poll
@@ -357,7 +357,7 @@ class EFitProperties(PropertyGroup):
         default='FULL',
     )
     use_exclusive_mode: BoolProperty(
-        name="Vertex Group Mode",
+        name="Exclusive Vertex Group Mode",
         description="Fit only the listed vertex groups instead of the full mesh. Vertices outside the listed groups will not be moved.",
         default=False,
         update=_on_exclusive_mode_toggle,
@@ -635,3 +635,24 @@ class EFitProperties(PropertyGroup):
         description="Base URL for update checks (dev mode only)",
         default="http://localhost:8198",
     )
+
+
+# ---------------------------------------------------------------------------
+# Addon preferences
+# ---------------------------------------------------------------------------
+
+class EFitAddonPreferences(AddonPreferences):
+    """Preferences registered under Edit > Preferences > Add-ons > Elastic Clothing Fit."""
+    bl_idname = "elastic_fit"
+
+    developer_mode: BoolProperty(
+        name="Developer Mode",
+        description=(
+            "Enables developer-facing options such as the Nightly Dev Build channel "
+            "and the local update server URL field."
+        ),
+        default=False,
+    )
+
+    def draw(self, context):
+        self.layout.prop(self, "developer_mode")

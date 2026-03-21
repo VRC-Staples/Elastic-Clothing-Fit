@@ -34,7 +34,7 @@ bl_info = {
 import bpy
 from bpy.props import PointerProperty
 
-from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProximityGroup, EFitArmatureEntry, EFitProperties
+from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProximityGroup, EFitArmatureEntry, EFitProperties, EFitAddonPreferences
 
 
 from .operators import (
@@ -109,6 +109,7 @@ def _efit_session_cleanup_on_load(_):
 # Registration order matters: PropertyGroups used as CollectionProperty types
 # must be registered before the PropertyGroup that holds them.
 _classes = (
+    EFitAddonPreferences,
     EFitProximityGroup,
     EFitExclusiveGroup,
     EFitOffsetGroup,

@@ -171,7 +171,11 @@ def _draw_proximity_falloff(layout, p, in_preview):
         add_row.enabled = not in_preview
         add_row.operator("efit.proximity_group_add", text="Add Group", icon='ADD')
     else:
-        # Global mode: show global controls, then the add button if tuning is on.
+        if p.use_proximity_group_tuning:
+            # Intermediate state: tuning enabled but no groups defined yet.
+            layout.label(text="Add a group to override global settings.", icon='INFO')
+        # Global fallback controls — always shown so the user can pre-set
+        # values before adding groups.
         col = layout.column(align=True)
         col.prop(p, "proximity_mode")
         col.prop(p, "proximity_start")
@@ -342,11 +346,20 @@ def _draw_update_tab(layout, context):
     split.label(text=f"v{'.'.join(str(x) for x in bpy.app.version)}")
     layout.separator()
 
-    # --- nightly channel toggle ---
-    layout.prop(p, "use_nightly_channel")
-    if updater._is_dev_mode():
-        layout.prop(p, "dev_update_url")
-    layout.separator()
+    # --- nightly channel toggle (developer mode only) ---
+    prefs = context.preferences.addons.get("elastic_fit")
+    developer_mode = prefs.preferences.developer_mode if prefs else False
+    if developer_mode:
+        layout.prop(p, "use_nightly_channel")
+        if updater._is_dev_mode():
+            layout.prop(p, "dev_update_url")
+        layout.separator()
+    elif p.use_nightly_channel:
+        # Already opted in before dev mode was introduced — keep it visible so
+        # the user can turn it off, but add a note about where the setting lives.
+        layout.prop(p, "use_nightly_channel")
+        layout.label(text="Enable Developer Mode in Preferences to manage this.", icon='INFO')
+        layout.separator()
 
     if s['status'] == 'checking':
         layout.label(text="Checking for updates...", icon='SORTTIME')
@@ -407,7 +420,7 @@ def _draw_exclusive_mode_warning(layout):
     """Warning box shown when exclusive vertex group mode is active."""
     warn       = layout.box()
     warn.alert = True
-    warn.label(text="Vertex Group Mode Active", icon='INFO')
+    warn.label(text="Exclusive Vertex Group Mode Active", icon='INFO')
     warn.label(text="Only vertices in the listed groups")
     warn.label(text="will be moved by the fit.")
 
@@ -432,14 +445,17 @@ def _full_tab(layout, p, in_preview):
 
     layout.separator()
 
+    _section(layout, p, 'show_fit_settings',      _draw_fit_settings,       p, in_preview)
+    _section(layout, p, 'show_shape_preservation', _draw_shape_preservation, p, in_preview)
+    if not is_exclusive:
+        _section(layout, p, 'show_preserve_group', _draw_preserve_group, p)
+
+    layout.separator()
+
     if _collapsible(layout, p, 'show_advanced'):
-        _section(layout, p, 'show_fit_settings',          _draw_fit_settings,          p, in_preview)
-        _section(layout, p, 'show_shape_preservation',     _draw_shape_preservation,    p, in_preview)
         _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
-        if not is_exclusive:
-            _section(layout, p, 'show_preserve_group',    _draw_preserve_group,        p)
-        _section(layout, p, 'show_offset_fine_tuning',    _draw_offset_fine_tuning,    p, in_preview)
-        _section(layout, p, 'show_misc',                  _draw_misc,                  p)
+        _section(layout, p, 'show_offset_fine_tuning',     _draw_offset_fine_tuning,     p, in_preview)
+        _section(layout, p, 'show_misc',                   _draw_misc,                   p)
 
 
 # ---------------------------------------------------------------------------
