@@ -176,15 +176,19 @@ def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):
         preserve_name = ""
     elif has_preserve:
         preserve_vg_idx = cloth.vertex_groups[preserve_name].index
-        n = len(cloth.data.vertices)
+        # Single pass: populate preserved_set and collect all vertex indices
+        # simultaneously, then derive fitted_indices with a list comprehension.
+        # This replaces three separate cloth.data.vertices iterations with one.
         preserved_set = set()
+        all_vi = []
         for v in cloth.data.vertices:
+            all_vi.append(v.index)
             for g in v.groups:
                 if g.group == preserve_vg_idx and g.weight > 0.0:
                     preserved_set.add(v.index)
                     break
-        preserved_indices = sorted(preserved_set)
-        fitted_indices = [vi for vi in range(n) if vi not in preserved_set]
+        preserved_indices = list(preserved_set)
+        fitted_indices = [vi for vi in all_vi if vi not in preserved_set]
     else:
         fitted_indices = list(range(len(cloth.data.vertices)))
 
@@ -270,12 +274,19 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)
     proxy_polys = proxy.data.polygons
 
+    # Bulk-read all cloth vertex positions once; both BVH query loops index
+    # into this flat buffer instead of accessing cloth.data.vertices[vi].co
+    # per iteration (which crosses the Python→C bridge N times per loop).
+    _cc_n   = len(cloth.data.vertices)
+    _cc_buf = np.empty(_cc_n * 3, dtype=np.float64)
+    cloth.data.vertices.foreach_get("co", _cc_buf)
+
     # Compute per-fitted-vertex displacement via inverse-distance weighted
     # barycentric interpolation from the three nearest proxy face vertices.
     cloth_displacements = {}
     for vi in fitted_indices:
-        v = cloth.data.vertices[vi]
-        loc, normal, face_idx, dist = bvh.find_nearest(v.co)
+        _vi_co = mathutils.Vector((_cc_buf[vi*3], _cc_buf[vi*3+1], _cc_buf[vi*3+2]))
+        loc, normal, face_idx, dist = bvh.find_nearest(_vi_co)
 
         if face_idx is None:
             cloth_displacements[vi] = mathutils.Vector((0.0, 0.0, 0.0))
@@ -286,7 +297,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
 
         # Weight each proxy face vertex's displacement by 1/distance.
         # 0.00001 floor avoids division-by-zero when positions coincide exactly.
-        weights = [1.0 / max((v.co - proxy_pre[fi]).length, 0.00001) for fi in fv]
+        weights = [1.0 / max((_vi_co - proxy_pre[fi]).length, 0.00001) for fi in fv]
         w_sum   = sum(weights)
 
         avg_disp = mathutils.Vector((0.0, 0.0, 0.0))
@@ -302,7 +313,10 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     bvh_body = state._bvh_cache.get(body_key)
     if bvh_body is None:
         body_faces = _build_face_list(body.data)
-        body_verts = [v.co for v in body.data.vertices]
+        _bv_n   = len(body.data.vertices)
+        _bv_buf = np.empty(_bv_n * 3, dtype=np.float64)
+        body.data.vertices.foreach_get("co", _bv_buf)
+        body_verts = [(_bv_buf[i*3], _bv_buf[i*3+1], _bv_buf[i*3+2]) for i in range(_bv_n)]
         bvh_body   = BVHTree.FromPolygons(body_verts, body_faces)
         state._bvh_cache.clear()
         state._bvh_cache[body_key] = bvh_body
@@ -310,8 +324,8 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     cloth_body_normals = {}
     cloth_body_distances = {}
     for vi in fitted_indices:
-        v = cloth.data.vertices[vi]
-        loc, normal, face_idx, dist = bvh_body.find_nearest(v.co)
+        _vi_co = mathutils.Vector((_cc_buf[vi*3], _cc_buf[vi*3+1], _cc_buf[vi*3+2]))
+        loc, normal, face_idx, dist = bvh_body.find_nearest(_vi_co)
         if normal is not None:
             cloth_body_normals[vi] = normal.normalized()
         else:
@@ -329,7 +343,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             # misidentify outside verts as inside and apply their full (large)
             # displacement unconditionally -- which explodes the mesh.
             n_unit = normal.normalized()
-            hit, _, _, _ = bvh_body.ray_cast(v.co + n_unit * 0.0001, n_unit)
+            hit, _, _, _ = bvh_body.ray_cast(_vi_co + n_unit * 0.0001, n_unit)
             cloth_body_distances[vi] = 0.0 if (hit is not None) else dist
         else:
             cloth_body_distances[vi] = dist
