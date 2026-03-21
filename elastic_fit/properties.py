@@ -233,7 +233,7 @@ class EFitProperties(PropertyGroup):
         default=False,
     )
     show_misc: BoolProperty(
-        name="Misc",
+        name="Reset & Cleanup",
         default=False,
     )
     show_armature_display: BoolProperty(

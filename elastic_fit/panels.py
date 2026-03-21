@@ -97,7 +97,7 @@ def _draw_action_buttons(layout, p, in_preview):
         fit_row.scale_y = 1.5
         fit_row.operator("efit.fit", icon='CHECKMARK')
         rm_row         = layout.row()
-        rm_row.scale_y = 1.2
+        rm_row.scale_y = 1.0
         rm_row.enabled = has_fit
         rm_row.operator("efit.remove", icon='X')
 
@@ -294,6 +294,7 @@ def _draw_mesh_join(layout, p):
 
 
 def _tools_tab(layout, p):
+    layout.label(text="Mesh and armature utilities.", icon='TOOL_SETTINGS')
     _section(layout, p, 'show_armature_display', _draw_armature_display, p)
     _section(layout, p, 'show_merge_armatures',  _draw_merge_armatures,  p)
     _section(layout, p, 'show_mesh_split',        _draw_mesh_split,       p)
