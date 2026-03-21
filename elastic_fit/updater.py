@@ -143,6 +143,18 @@ _NIGHTLY_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)-nightly-(\d{8,12})\.zip$")
 # Matches "SHA256: <64 hex chars>" anywhere in release notes body.
 _SHA256_RE = re.compile(r'\bSHA256:\s*([0-9a-fA-F]{64})\b')
 
+# Security constants
+# Validates tag_name before it is spliced into a filesystem path.
+# Anchored at the start; allows semver suffixes like '-nightly-20240321'.
+_SAFE_TAG_RE = re.compile(r'^v?\d+\.\d+\.\d+')
+
+# Maximum bytes accepted from a release zip download (50 MB).
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+
+# Maximum bytes accepted from the GitHub releases API JSON response (1 MB).
+# A real response is ~10 KB; this cap guards against a runaway/malicious proxy.
+MAX_JSON_BYTES = 1 * 1024 * 1024
+
 
 def _installed_channel():
     """Return 'nightly' if the installed addon contains the marker file, else 'stable'."""
@@ -317,7 +329,9 @@ def _check_thread(use_nightly=False, dev_url_base='', blender_version=(0, 0, 0))
             )
             opener = urllib.request.build_opener(_AllowlistRedirectHandler)
             resp = _urlopen_with_retry(opener, req=req, timeout=10)
-            raw = resp.read()
+            raw = resp.read(MAX_JSON_BYTES + 1)
+            if len(raw) > MAX_JSON_BYTES:
+                raise ValueError("Response too large")
             if resp.headers.get('Content-Encoding') == 'gzip':
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode('utf-8'))
@@ -480,6 +494,14 @@ def _download_thread(scripts_dir=''):
         url       = _state['url']
         cache_dir = os.path.join(scripts_dir, 'efit_update_cache')
         os.makedirs(cache_dir, exist_ok=True)
+        # Validate tag_name before splicing it into a filesystem path to prevent
+        # path traversal.  Tags like '../../etc/passwd' must be rejected.
+        if not _SAFE_TAG_RE.match(tag):
+            with _state_lock:
+                _state['status'] = 'error'
+                _state['error']  = 'Invalid tag format'
+            _schedule_redraw()
+            return
         zip_path  = os.path.join(cache_dir, f'ElasticClothingFit-{tag}.zip')
 
         req = urllib.request.Request(
@@ -518,6 +540,19 @@ def _download_thread(scripts_dir=''):
                 fh.write(chunk)
                 h.update(chunk)
                 downloaded += len(chunk)
+                # Abort if the download exceeds the size cap — prevents an
+                # unbounded write that could fill the disk.
+                if downloaded > MAX_DOWNLOAD_BYTES:
+                    fh.close()
+                    try:
+                        os.remove(zip_path)
+                    except OSError:
+                        pass
+                    with _state_lock:
+                        _state['status'] = 'error'
+                        _state['error']  = 'Download too large'
+                    _schedule_redraw()
+                    return
                 if total > 0:
                     _state['progress'] = downloaded / total
                 # Throttle redraws to ≥5% progress increments to reduce UI thrash.
