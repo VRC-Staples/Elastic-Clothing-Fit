@@ -69,9 +69,12 @@ def _run_suite(blender, script_path, blend_root, extra_args=None):
     cmd = [blender, "--background", "--python", str(script_path), "--"]
     if extra_args:
         cmd.extend(extra_args)
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    combined = result.stdout + result.stderr
-    return result.returncode, combined
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        combined = result.stdout + result.stderr
+        return result.returncode, combined
+    except subprocess.TimeoutExpired:
+        return 1, f"[TIMEOUT] Suite '{script_path.name}' timed out after 300s\n"
 
 
 def _run_screenshots(blender, blend_path, out_root):
@@ -94,7 +97,7 @@ def _run_screenshots(blender, blend_path, out_root):
         "--out-dir", out_dir,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         combined = result.stdout + result.stderr
         if result.returncode != 0:
             # include truncated stderr so the warning is self-describing

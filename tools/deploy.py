@@ -171,6 +171,7 @@ def _build_zip(version, nightly=False):
                 result = subprocess.run(
                     ['git', 'rev-parse', '--short=7', 'HEAD'],
                     capture_output=True, text=True, cwd=str(_ROOT),
+                    timeout=180,
                 )
                 short_hash = result.stdout.strip() if result.returncode == 0 else 'unknown'
             except Exception:
@@ -195,6 +196,7 @@ def _run_phase(blender, script, zip_path):
          "--python", str(script), "--", "--zip", str(zip_path)],
         capture_output=True,
         text=True,
+        timeout=180,
     )
     return result.returncode, result.stdout + result.stderr
 
@@ -259,6 +261,7 @@ def _run_install(blender, zip_path):
          "--python", str(_UNINSTALL_SCRIPT)],
         capture_output=True,
         text=True,
+        timeout=180,
     )
     out_u = result_u.stdout + result_u.stderr
     print(out_u)
@@ -275,6 +278,7 @@ def _run_install(blender, zip_path):
          "--python", str(_INSTALL_SCRIPT), "--", "--zip", str(zip_path)],
         capture_output=True,
         text=True,
+        timeout=180,
     )
     out_i = result_i.stdout + result_i.stderr
     print(out_i)
