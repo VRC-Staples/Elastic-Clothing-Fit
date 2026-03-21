@@ -5,7 +5,6 @@
 # these names here is visible across the whole package.
 
 import math
-import statistics
 import mathutils
 import numpy as np
 
@@ -263,59 +262,69 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
     return result
 
 
-def _apply_disp_smoothing(smoothed, fitted_indices, cloth_adj,
+def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
                           ds_passes, ds_thresh_mult, ds_min, ds_max):
-    """Apply adaptive multi-pass displacement smoothing and return the result.
+    """Apply adaptive multi-pass displacement smoothing on a numpy (N,3) array.
 
-    Each pass computes a per-vertex displacement gradient (max diff to edge
-    neighbors).  Vertices above median*threshold are blended hard toward the
-    neighbor average (ds_max); those below are blended lightly (ds_min).
-    Fixes creases in concave areas while leaving smooth regions untouched.
+    ``smoothed_arr`` is an ``np.ndarray`` of shape ``(N, 3)`` float64 where
+    row ``i`` corresponds to vertex ``fitted_indices[i]``.  The array is NOT
+    modified in place — each pass works on a copy.
 
-    Returns the smoothed dict (new dict; input is not modified in place).
+    Each pass computes a per-vertex displacement gradient (max Euclidean
+    distance to edge neighbors).  Vertices above median*threshold are blended
+    hard toward the neighbor average (ds_max); those below are blended lightly
+    (ds_min).  Fixes creases in concave areas while leaving smooth regions
+    untouched.
+
+    Returns an ``np.ndarray (N, 3)`` float64 with smoothed displacements.
     """
+    # Positional index map: vertex index → row position in smoothed_arr.
+    # Critical: cloth_adj uses vertex indices; smoothed_arr uses row indices.
+    vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
+    N = len(fitted_indices)
+
     for _pass in range(ds_passes):
-        gradient = {}
-        for vi in fitted_indices:
+        # --- Gradient computation (max distance to any fitted neighbor) ---
+        gradient = np.zeros(N, dtype=np.float64)
+        for i, vi in enumerate(fitted_indices):
             neighbors = cloth_adj[vi]
             if not neighbors:
-                gradient[vi] = 0.0
                 continue
-            d        = smoothed[vi]
             max_diff = 0.0
             for ni in neighbors:
-                diff = (d - smoothed[ni]).length
+                ni_pos = vi_to_pos.get(ni)
+                if ni_pos is None:
+                    continue
+                diff = np.linalg.norm(smoothed_arr[i] - smoothed_arr[ni_pos])
                 if diff > max_diff:
                     max_diff = diff
-            gradient[vi] = max_diff
+            gradient[i] = max_diff
 
-        # statistics.median is O(n) via quickselect -- no full sort needed.
-        median_grad = statistics.median(gradient.values()) if gradient else 0.0
+        # --- Median threshold (np.median replaces statistics.median) ---
+        median_grad = float(np.median(gradient))
 
-        new_smoothed = {}
-        for vi in fitted_indices:
+        # --- Vectorised blend factor computation ---
+        threshold = max(median_grad * ds_thresh_mult, 0.0001)
+        t = np.clip((gradient - threshold) / max(threshold, 0.0001), 0.0, 1.0)
+        blend = np.where(gradient <= threshold,
+                         ds_min,
+                         ds_min + (ds_max - ds_min) * t)
+
+        # --- Neighbor averaging (inner loop; irregular adjacency prevents
+        #     full vectorisation but uses direct array indexing not Vectors) ---
+        new_arr = smoothed_arr.copy()
+        for i, vi in enumerate(fitted_indices):
             neighbors = cloth_adj[vi]
             if not neighbors:
-                new_smoothed[vi] = smoothed[vi].copy()
                 continue
-            g         = gradient[vi]
-            threshold = max(median_grad * ds_thresh_mult, 0.0001)
-            if g <= threshold:
-                blend = ds_min
-            else:
-                t     = min(1.0, (g - threshold) / max(threshold, 0.0001))
-                blend = ds_min + (ds_max - ds_min) * t
-            # Accumulate neighbor average as plain floats -- avoids
-            # allocating a mathutils.Vector per vertex per pass.
-            ax = ay = az = 0.0
-            for ni in neighbors:
-                s = smoothed[ni]
-                ax += s.x; ay += s.y; az += s.z
-            n_n = len(neighbors)
-            avg = mathutils.Vector((ax / n_n, ay / n_n, az / n_n))
-            new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
-        smoothed = new_smoothed
-    return smoothed
+            neighbor_positions = [vi_to_pos[ni] for ni in neighbors if ni in vi_to_pos]
+            if not neighbor_positions:
+                continue
+            avg = smoothed_arr[neighbor_positions].mean(axis=0)
+            new_arr[i] = smoothed_arr[i] * (1.0 - blend[i]) + avg * blend[i]
+        smoothed_arr = new_arr
+
+    return smoothed_arr
 
 
 # ---------------------------------------------------------------------------
@@ -345,17 +354,24 @@ def call_handler(name, self, context):
 def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
     """Build a smoothed copy of displacements using current property slider values.
 
-    Wraps the initial dict copy and param extraction that both the fit pipeline
-    and the live preview share, so neither duplicates that setup.
+    Wraps the numpy array construction (from the {vi: Vector} input dict),
+    the call to ``_apply_disp_smoothing``, and the conversion back to
+    ``{vi: Vector}`` so all callers remain unchanged.
 
     Returns a new dict {vi: Vector} with smoothed displacements.
     """
-    smoothed = {vi: displacements[vi].copy() for vi in fitted_indices}
-    return _apply_disp_smoothing(
-        smoothed, fitted_indices, cloth_adj,
+    # Build (N, 3) float64 array — row i corresponds to fitted_indices[i].
+    smoothed_arr = np.array(
+        [displacements[vi].to_tuple() for vi in fitted_indices],
+        dtype=np.float64,
+    )
+    result_arr = _apply_disp_smoothing(
+        smoothed_arr, fitted_indices, cloth_adj,
         p.disp_smooth_passes, p.disp_smooth_threshold,
         p.disp_smooth_min, p.disp_smooth_max,
     )
+    # Convert back to {vi: Vector} — callers (pipeline.py, preview.py) unchanged.
+    return {vi: mathutils.Vector(result_arr[i]) for i, vi in enumerate(fitted_indices)}
 
 
 def _compute_offset_group_weights(cloth, offset_groups, fitted_indices, vg_membership=None):
