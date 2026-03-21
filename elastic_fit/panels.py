@@ -8,12 +8,57 @@ import pathlib
 import bpy
 from bpy.types import Panel
 
+from . import _meta
 from . import state
 from . import updater
 from .state import _has_blockers_cached, PANEL_CATEGORY
 from .properties import _resolve_vg_name
 
 _nightly_path = pathlib.Path(__file__).parent / "_nightly.txt"
+
+# ---------------------------------------------------------------------------
+# Module-level caches — populated at load and refreshed by callbacks.
+# These replace per-draw disk I/O, circular imports, and repeated string
+# formatting that previously ran on every panel redraw.
+# ---------------------------------------------------------------------------
+
+# Blender version string computed once at module load.
+# panels.py is only ever imported inside Blender, so bpy.app.version is
+# available at this point.
+_BLENDER_VERSION_STR: str = "v" + ".".join(str(x) for x in bpy.app.version)
+
+# Cached content of _nightly.txt (None = file absent or unreadable).
+# Updated by _refresh_nightly_content(), called from __init__.register()
+# and from the download-completion callback in updater.py.
+_nightly_content: "str | None" = None
+
+# Cached developer_mode preference value.
+# Written by the BoolProperty update= callback in properties.py so the draw
+# function never has to traverse context.preferences.addons on every redraw.
+_cached_developer_mode: bool = False
+
+
+def _refresh_nightly_content() -> None:
+    """Re-read _nightly.txt and update the module-level cache.
+
+    Called once at addon registration (via __init__.register()) and again
+    whenever a download completes (via updater._download_thread).
+    Safe to call from any thread — the GIL makes the single-name rebind atomic.
+
+    Observability: After this function runs, ``panels._nightly_content`` holds
+    the current file contents (or None).  Inspect it in a Python REPL or
+    Blender's Python console to confirm the cache is populated:
+        from elastic_fit import panels; print(panels._nightly_content)
+    """
+    global _nightly_content
+    try:
+        _nightly_content = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
+    except OSError:
+        _nightly_content = None
+
+
+# Populate on module load so the first draw has content available.
+_refresh_nightly_content()
 
 
 def _wrap_text(text, max_chars=40, max_lines=3):
@@ -324,13 +369,16 @@ def _draw_exclusive_groups(layout, p, in_preview):
 
 
 def _draw_update_tab(layout, context):
-    from . import bl_info
     p = context.scene.efit_props
     s = updater.get_state()
 
     # --- version header ---
-    version_str = f"v{'.'.join(str(x) for x in bl_info['version'])}"
-    nightly_ts = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
+    # _meta.ADDON_VERSION is set from bl_info by __init__.register(); falls back
+    # to the placeholder (1,0,4) only if panels.py is imported before register().
+    version_str = "v" + ".".join(str(x) for x in _meta.ADDON_VERSION)
+    # _nightly_content is populated at module load and after each download; no
+    # disk I/O occurs inside this draw function.
+    nightly_ts = _nightly_content
     if nightly_ts:
         parts = nightly_ts.split()
         ts_part = parts[0] if parts else nightly_ts
@@ -349,12 +397,14 @@ def _draw_update_tab(layout, context):
     split.label(text=version_str)
     split = layout.split(factor=0.4)
     split.label(text="Blender")
-    split.label(text=f"v{'.'.join(str(x) for x in bpy.app.version)}")
+    # _BLENDER_VERSION_STR is computed once at module load — no per-draw format.
+    split.label(text=_BLENDER_VERSION_STR)
     layout.separator()
 
     # --- nightly channel toggle (developer mode only) ---
-    prefs = context.preferences.addons.get("elastic_fit")
-    developer_mode = prefs.preferences.developer_mode if prefs else False
+    # _cached_developer_mode is kept current by the BoolProperty update= callback
+    # in properties.py; no preferences.addons traversal per redraw.
+    developer_mode = _cached_developer_mode
     if developer_mode:
         layout.prop(p, "use_nightly_channel")
         if updater._is_dev_mode():

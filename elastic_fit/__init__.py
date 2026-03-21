@@ -197,6 +197,11 @@ def register():
             f".Staples. Elastic Clothing Fit requires Blender {ver} or later "
             f"(running {bpy.app.version_string}). Please upgrade Blender."
         )
+    # Propagate the authoritative version from bl_info into _meta so that
+    # panels.py can read it without a circular import.
+    from . import _meta
+    _meta.ADDON_VERSION = tuple(bl_info['version'])
+
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.efit_props = PointerProperty(type=EFitProperties)
@@ -216,6 +221,11 @@ def register():
     state.register_handler('proximity_group_name_update',       _on_proximity_group_name_update)
 
     updater.check_for_update()
+
+    # Prime the nightly content cache so panels.py _draw_update_tab does not
+    # open the file on every draw call.
+    from . import panels as _panels
+    _panels._refresh_nightly_content()
 
     # Start the blender-mcp socket server after a short delay so the session
     # is fully ready. 0.5 s is enough for Blender's startup sequence to finish.

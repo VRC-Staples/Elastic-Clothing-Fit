@@ -641,6 +641,24 @@ class EFitProperties(PropertyGroup):
 # Addon preferences
 # ---------------------------------------------------------------------------
 
+def _on_developer_mode_update(self, context):
+    """Write the new developer_mode value to the panels module-level cache.
+
+    This update= callback fires when the user toggles Developer Mode in
+    preferences, keeping panels._cached_developer_mode in sync without
+    requiring panels._draw_update_tab to traverse context.preferences.addons
+    on every redraw.
+
+    Import is deferred to avoid a circular dependency at module load time
+    (properties.py → panels.py → properties.py).
+    """
+    try:
+        from . import panels as _panels
+        _panels._cached_developer_mode = bool(self.developer_mode)
+    except Exception:
+        pass
+
+
 class EFitAddonPreferences(AddonPreferences):
     """Preferences registered under Edit > Preferences > Add-ons > Elastic Clothing Fit."""
     bl_idname = "elastic_fit"
@@ -652,6 +670,7 @@ class EFitAddonPreferences(AddonPreferences):
             "and the local update server URL field."
         ),
         default=False,
+        update=_on_developer_mode_update,
     )
 
     def draw(self, context):

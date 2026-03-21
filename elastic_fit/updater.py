@@ -601,6 +601,14 @@ def _download_thread(scripts_dir=''):
             _state['status']   = 'ready'
             _state['progress'] = 1.0
 
+        # Refresh the nightly content cache in panels so the draw function
+        # shows the newly-downloaded version string without a disk read per frame.
+        try:
+            from . import panels as _panels
+            _panels._refresh_nightly_content()
+        except Exception:
+            pass
+
     except Exception as exc:
         # Clean up partial file.
         if zip_path and os.path.exists(zip_path):
