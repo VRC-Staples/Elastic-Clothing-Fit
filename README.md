@@ -209,7 +209,7 @@ When a fit is active, the panel enters **Preview Mode**. The following controls 
 
 ## Requirements
 
-- Blender 3.0 or newer
+- Blender 3.2 or newer
 - Clothing mesh should have no shape keys or unapplied modifiers (use **Clear Blockers** if needed)
 
 ## License

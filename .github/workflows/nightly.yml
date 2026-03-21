@@ -14,9 +14,22 @@ jobs:
     permissions:
       contents: write      # gh release create needs write access
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - blender_version: "4.2.9"
+            blender_dir: "blender-4.2.9-linux-x64"
+            url_subdir: "Blender4.2"
+            primary: true    # only the primary entry publishes the release
+          - blender_version: "3.6.19"
+            blender_dir: "blender-3.6.19-linux-x64"
+            url_subdir: "Blender3.6"
+            primary: false
+
     env:
-      BLENDER_VERSION: "4.2.9"
-      BLENDER_DIR: "blender-4.2.9-linux-x64"
+      BLENDER_VERSION: ${{ matrix.blender_version }}
+      BLENDER_DIR: ${{ matrix.blender_dir }}
 
     steps:
       - name: Checkout
@@ -39,7 +52,7 @@ jobs:
         run: |
           mkdir -p ~/blender-cache
           cd ~/blender-cache
-          curl -L -O "https://download.blender.org/release/Blender4.2/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          curl -L -O "https://download.blender.org/release/${{ matrix.url_subdir }}/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
           tar -xJf "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
           rm "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
 
@@ -52,7 +65,7 @@ jobs:
           xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build --nightly
 
       - name: Publish rolling nightly release
-        if: success()
+        if: success() && matrix.primary
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -60,10 +73,11 @@ jobs:
           gh release delete nightly --yes 2>/dev/null || true
           git push origin :refs/tags/nightly 2>/dev/null || true
           RECENT_COMMITS=$(git log -5 --pretty=format:"- %s" HEAD)
-          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability.\n\nAuto-built from `dev-UX-Tuning` @ %s\n\nAuto-build Run Status: https://github.com/%s/actions/runs/%s\n\n### Recent changes\n%s\n\n[View all commits](https://github.com/${{ github.repository }}/commits/dev-UX-Tuning)\n\nBLENDER_MIN=3.0.0' \
+          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability.\n\nAuto-built from `dev-UX-Tuning` @ %s\n\nAuto-build Run Status: https://github.com/%s/actions/runs/%s\n\n### Recent changes\n%s\n\n[View all commits](https://github.com/${{ github.repository }}/commits/dev-UX-Tuning)\n\nBLENDER_MIN=3.2.0' \
             '${{ github.sha }}' '${{ github.repository }}' '${{ github.run_id }}' "$RECENT_COMMITS")
           gh release create nightly "$ZIP" \
             --title "Nightly Dev Build $(date -u '+%Y-%m-%d')" \
             --notes "$NOTES" \
             --prerelease \
             --target dev-UX-Tuning
+

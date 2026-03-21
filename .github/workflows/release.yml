@@ -1,0 +1,109 @@
+name: Stable Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'   # e.g. v1.0.5
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (must already exist, e.g. v1.0.5)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      BLENDER_VERSION: "4.2.9"
+      BLENDER_DIR: "blender-4.2.9-linux-x64"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so bl_info version reads correctly
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache Blender
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: ~/blender-cache
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender
+        if: steps.cache-blender.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender-cache
+          cd ~/blender-cache
+          curl -L -O "https://download.blender.org/release/Blender4.2/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          tar -xJf "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          rm "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+
+      - name: Install xvfb
+        run: sudo apt-get install -y xvfb
+
+      - name: Build and test
+        run: |
+          BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
+          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
+
+      - name: Read bl_info version and compute SHA-256
+        id: meta
+        run: |
+          # Extract the minimum Blender version from bl_info (canonical source)
+          BLENDER_MIN=$(python - <<'EOF'
+          import ast, sys
+          with open("elastic_fit/__init__.py") as f:
+              src = f.read()
+          tree = ast.parse(src)
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assign):
+                  for t in node.targets:
+                      if isinstance(t, ast.Name) and t.id == "bl_info":
+                          d = ast.literal_eval(node.value)
+                          v = d.get("blender", (3, 2, 0))
+                          print(".".join(str(x) for x in v))
+                          sys.exit(0)
+          print("3.2.0")
+          EOF
+          )
+          ZIP=$(ls ElasticClothingFit-v*.zip | grep -v nightly | head -1)
+          SHA=$(sha256sum "$ZIP" | awk '{print $1}')
+          echo "BLENDER_MIN=$BLENDER_MIN" >> "$GITHUB_OUTPUT"
+          echo "ZIP=$ZIP"                 >> "$GITHUB_OUTPUT"
+          echo "SHA256=$SHA"              >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          ZIP="${{ steps.meta.outputs.ZIP }}"
+          BLENDER_MIN="${{ steps.meta.outputs.BLENDER_MIN }}"
+          SHA256="${{ steps.meta.outputs.SHA256 }}"
+
+          NOTES=$(printf '## %s\n\n### Installation\n1. Download `%s`\n2. In Blender: Edit → Preferences → Add-ons → Install → select the zip\n3. Enable **.Staples. Elastic Clothing Fit**\n\n### Verification\n```\nSHA256: %s\n```\n\nBLENDER_MIN=%s' \
+            "$TAG" "$ZIP" "$SHA256" "$BLENDER_MIN")
+
+          gh release create "$TAG" "$ZIP" \
+            --title "$TAG" \
+            --notes "$NOTES" \
+            --verify-tag

@@ -25,7 +25,7 @@ bl_info = {
     "name": ".Staples. Elastic Clothing Fit",
     "author": ".Staples.",
     "version": (1, 0, 5),
-    "blender": (3, 0, 0),
+    "blender": (3, 2, 0),
     "location": "View3D > Sidebar > .Staples. Elastic Fit",
     "description": "Elastic, UV-safe clothing fitting with live preview and per-region offset control",
     "category": "3D View",
@@ -185,7 +185,16 @@ def _efit_start_mcp_server():
     return None  # do not reschedule
 
 
+_MIN_BLENDER = (3, 2, 0)
+
+
 def register():
+    if bpy.app.version < _MIN_BLENDER:
+        ver = ".".join(str(x) for x in _MIN_BLENDER)
+        raise RuntimeError(
+            f".Staples. Elastic Clothing Fit requires Blender {ver} or later "
+            f"(running {bpy.app.version_string}). Please upgrade Blender."
+        )
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.efit_props = PointerProperty(type=EFitProperties)
