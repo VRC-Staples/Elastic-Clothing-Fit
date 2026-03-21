@@ -257,7 +257,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     to apply offset changes without re-running shrinkwrap) and precomputes per-vertex weights
     for offset influence groups.
 
-    Returns (cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj).
+    Returns (cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, bvh).
     """
     proxy_faces = _build_face_list(proxy.data)
     bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)

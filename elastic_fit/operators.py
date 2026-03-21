@@ -174,7 +174,7 @@ class EFIT_OT_fit(Operator):
 
         # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, proxy_bvh = \
+        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, _proxy_bvh = \
             _efit_transfer_displacements(
                 cloth, proxy, proxy_pre, proxy_post, body, fitted_indices, source_groups)
 
@@ -246,7 +246,6 @@ class EFIT_OT_fit(Operator):
             'original_offset':      p.offset,
             'offset_group_weights': offset_group_weights,
             'vg_membership':        vg_membership,
-            'proxy_bvh':            proxy_bvh,
         }
 
         # Reselect clothing.

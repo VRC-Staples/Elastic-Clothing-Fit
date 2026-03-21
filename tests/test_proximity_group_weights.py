@@ -57,7 +57,8 @@ def _compute_proximity_weights(distances, fitted_indices, start, end, curve_key)
     return result
 
 
-def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_indices):
+def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_indices,
+                                     vg_membership=None):
     result = {vi: 1.0 for vi in fitted_indices}
 
     if not proximity_groups:
@@ -74,14 +75,19 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
             continue
         vg_idx = vg.index
 
-        group_fitted = []
-        for v in cloth.data.vertices:
-            if v.index not in fitted_set:
-                continue
-            for g in v.groups:
-                if g.group == vg_idx and g.weight > 0.0:
-                    group_fitted.append(v.index)
-                    break
+        # Fast path: pre-built membership dict available.
+        if vg_membership is not None and vg_idx in vg_membership:
+            group_fitted = [vi for vi in vg_membership[vg_idx] if vi in fitted_set]
+        else:
+            # Fallback: iterate vertices (used when no cache is available).
+            group_fitted = []
+            for v in cloth.data.vertices:
+                if v.index not in fitted_set:
+                    continue
+                for g in v.groups:
+                    if g.group == vg_idx and g.weight > 0.0:
+                        group_fitted.append(v.index)
+                        break
 
         if not group_fitted:
             continue
@@ -358,3 +364,110 @@ class TestComputeProximityGroupWeights:
         ]
         result = _compute_proximity_group_weights(cloth, pgs, distances, fitted)
         assert set(result.keys()) == set(fitted)
+
+
+class TestComputeProximityGroupWeightsVgMembership:
+    """Tests for the vg_membership fast path added in M003/S02.
+
+    The fast path uses a pre-built {vg_idx: set(vi)} dict instead of iterating
+    cloth.data.vertices per group.  These tests verify it produces identical
+    results to the fallback path and handles edge cases correctly.
+    """
+
+    def _make_vg_membership(self, cloth, fitted_indices):
+        """Build a vg_membership dict the same way pipeline.py does it."""
+        fitted_set = set(fitted_indices)
+        vg_membership = {}
+        for v in cloth.data.vertices:
+            if v.index not in fitted_set:
+                continue
+            for g in v.groups:
+                if g.weight > 0.0:
+                    vg_membership.setdefault(g.group, set()).add(v.index)
+        return vg_membership
+
+    def test_fast_path_matches_fallback_single_group(self):
+        """vg_membership path produces same result as vertex-iteration fallback."""
+        cloth = _make_cloth(4, {"A": [(0, 1.0), (1, 1.0)]})
+        fitted = [0, 1, 2, 3]
+        distances = {0: 0.0, 1: 0.05, 2: 0.2, 3: 0.0}
+        pg = _ProxGroup(group_name="A", proximity_start=0.0, proximity_end=0.1,
+                        proximity_curve='LINEAR')
+
+        result_fallback = _compute_proximity_group_weights(
+            cloth, [pg], distances, fitted, vg_membership=None)
+        vg_mem = self._make_vg_membership(cloth, fitted)
+        result_fast = _compute_proximity_group_weights(
+            cloth, [pg], distances, fitted, vg_membership=vg_mem)
+
+        assert set(result_fast.keys()) == set(result_fallback.keys())
+        for vi in fitted:
+            assert result_fast[vi] == pytest.approx(result_fallback[vi], abs=1e-9), \
+                f"vi={vi}: fast={result_fast[vi]}, fallback={result_fallback[vi]}"
+
+    def test_fast_path_matches_fallback_multi_group(self):
+        """vg_membership fast path matches fallback with two overlapping groups."""
+        cloth = _make_cloth(4, {"A": [(0, 1.0), (1, 1.0)], "B": [(1, 1.0), (2, 1.0)]})
+        fitted = [0, 1, 2, 3]
+        distances = {0: 0.02, 1: 0.05, 2: 0.08, 3: 0.0}
+        pgs = [
+            _ProxGroup(group_name="A", proximity_start=0.0, proximity_end=0.1,
+                       proximity_curve='SMOOTH'),
+            _ProxGroup(group_name="B", proximity_start=0.0, proximity_end=0.2,
+                       proximity_curve='LINEAR'),
+        ]
+
+        result_fallback = _compute_proximity_group_weights(
+            cloth, pgs, distances, fitted, vg_membership=None)
+        vg_mem = self._make_vg_membership(cloth, fitted)
+        result_fast = _compute_proximity_group_weights(
+            cloth, pgs, distances, fitted, vg_membership=vg_mem)
+
+        for vi in fitted:
+            assert result_fast[vi] == pytest.approx(result_fallback[vi], abs=1e-9), \
+                f"vi={vi}: fast={result_fast[vi]}, fallback={result_fallback[vi]}"
+
+    def test_fast_path_skips_group_missing_from_membership(self):
+        """If vg_idx is not in vg_membership, the code falls back to vertex iteration.
+
+        When vg_membership is not None but doesn't contain the vg_idx, the condition
+        `vg_membership is not None and vg_idx in vg_membership` is False, so the else
+        branch (vertex iteration fallback) runs normally.  This test verifies fallback
+        still produces correct weights rather than skipping the group entirely.
+        """
+        cloth = _make_cloth(3, {"A": [(0, 1.0)]})
+        fitted = [0, 1, 2]
+        distances = {0: 0.5, 1: 0.5, 2: 0.5}
+        pg = _ProxGroup(group_name="A", proximity_start=0.0, proximity_end=0.1)
+
+        # vg_membership that intentionally omits vg_idx 0 — triggers fallback, not skip
+        vg_mem = {}
+        result = _compute_proximity_group_weights(
+            cloth, [pg], distances, fitted, vg_membership=vg_mem)
+
+        # Fallback iterates vertices: vi=0 is in group at distance 0.5 > end=0.1 → 0.0
+        # vi=1, vi=2 not in group → stay 1.0
+        assert result[0] == pytest.approx(0.0)
+        assert result[1] == pytest.approx(1.0)
+        assert result[2] == pytest.approx(1.0)
+
+    def test_fast_path_excludes_non_fitted_vertices(self):
+        """vg_membership may contain non-fitted verts; fast path must exclude them."""
+        cloth = _make_cloth(4, {"A": [(0, 1.0), (3, 1.0)]})
+        fitted = [0, 1, 2]  # vi=3 is NOT fitted
+        distances = {0: 0.05, 1: 0.0, 2: 0.0}
+        pg = _ProxGroup(group_name="A", proximity_start=0.0, proximity_end=0.1,
+                        proximity_curve='LINEAR')
+
+        vg_mem = self._make_vg_membership(cloth, list(range(4)))  # built with all 4 verts
+        result = _compute_proximity_group_weights(
+            cloth, [pg], distances, fitted, vg_membership=vg_mem)
+
+        # vi=3 not in fitted → must not appear in result
+        assert 3 not in result
+        assert set(result.keys()) == set(fitted)
+        # vi=0 is in group, at distance 0.05 with LINEAR → should be < 1.0
+        assert result[0] < 1.0
+        # vi=1, vi=2 not in group → 1.0
+        assert result[1] == pytest.approx(1.0)
+        assert result[2] == pytest.approx(1.0)
