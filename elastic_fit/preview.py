@@ -272,7 +272,7 @@ def _on_offset_group_name_update(self, context):
     fitted_indices = state._efit_cache.get('fitted_indices', [])
     p = context.scene.efit_props
     # Build VG membership inline (non-hot-path: only fires on group name change).
-    fitted_set = set(fitted_indices)
+    fitted_set = state._efit_cache.get('fitted_set') or set(fitted_indices)
     vg_membership = {}
     for v in cloth.data.vertices:
         if v.index not in fitted_set:

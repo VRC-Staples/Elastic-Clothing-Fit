@@ -150,6 +150,10 @@ class EFIT_OT_fit(Operator):
         fitted_indices, preserved_indices, has_preserve, preserve_name = \
             _efit_classify_vertices(cloth, p, has_preserve, preserve_name)
 
+        # Cache the fitted set immediately — pipeline and state helpers read it
+        # back from the cache instead of rebuilding set(fitted_indices) each call.
+        state._efit_cache['fitted_set'] = set(fitted_indices)
+
         # -- Optional: build a convex-hull proxy of the body as the shrinkwrap target.
         # The hull fills concave regions (crotch, inner thigh) so the shrinkwrap
         # cannot pull clothing vertices into cavities between legs. Disabled by
@@ -230,12 +234,20 @@ class EFIT_OT_fit(Operator):
                 preserved_indices, pre_offset_positions, p)
 
         # -- Populate preview cache (slider changes will re-apply from here) --
+        # Preserve fitted_set and KDTree entries that were written earlier in this
+        # execute() call — they are valid for the full preview lifetime and must
+        # survive the dict-replace below.
+        _kd_preserve = state._efit_cache.get('kd_preserve')
+        _kd_fitted   = state._efit_cache.get('kd_fitted')
+        _kd_follow   = state._efit_cache.get('kd_follow')
+        _fitted_set  = state._efit_cache.get('fitted_set', set(fitted_indices))
         state._efit_cache = {
             'cloth_name':           cloth.name,
             'all_originals':        all_originals,
             'cloth_displacements':  cloth_displacements,
             'cloth_adj':            cloth_adj,
             'fitted_indices':       fitted_indices,
+            'fitted_set':           _fitted_set,
             'preserved_indices':    preserved_indices,
             'has_preserve':         has_preserve,
             'preserve_name':        preserve_name,
@@ -247,6 +259,12 @@ class EFIT_OT_fit(Operator):
             'offset_group_weights': offset_group_weights,
             'vg_membership':        vg_membership,
         }
+        if _kd_preserve is not None:
+            state._efit_cache['kd_preserve'] = _kd_preserve
+        if _kd_fitted is not None:
+            state._efit_cache['kd_fitted'] = _kd_fitted
+        if _kd_follow is not None:
+            state._efit_cache['kd_follow'] = _kd_follow
 
         # Reselect clothing.
         bpy.ops.object.select_all(action='DESELECT')

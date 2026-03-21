@@ -225,15 +225,22 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
     # to a preserved clothing vertex than a fitted one, so deformation does
     # not bleed into the preserved region via BVH interpolation.
     if has_preserve and preserved_indices:
-        kd_preserve = KDTree(len(preserved_indices))
-        for i, vi in enumerate(preserved_indices):
-            kd_preserve.insert(all_originals[vi], i)
-        kd_preserve.balance()
+        # Read from cache if already built this fit cycle; build and cache on miss.
+        kd_preserve = state._efit_cache.get('kd_preserve')
+        if kd_preserve is None:
+            kd_preserve = KDTree(len(preserved_indices))
+            for i, vi in enumerate(preserved_indices):
+                kd_preserve.insert(all_originals[vi], i)
+            kd_preserve.balance()
+            state._efit_cache['kd_preserve'] = kd_preserve
 
-        kd_fitted = KDTree(len(fitted_indices))
-        for i, vi in enumerate(fitted_indices):
-            kd_fitted.insert(all_originals[vi], i)
-        kd_fitted.balance()
+        kd_fitted = state._efit_cache.get('kd_fitted')
+        if kd_fitted is None:
+            kd_fitted = KDTree(len(fitted_indices))
+            for i, vi in enumerate(fitted_indices):
+                kd_fitted.insert(all_originals[vi], i)
+            kd_fitted.balance()
+            state._efit_cache['kd_fitted'] = kd_fitted
 
         for pi in range(len(proxy_pre)):
             pos = proxy_pre[pi]
@@ -446,11 +453,17 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     if strength <= 0.0:
         return
 
-    kd_follow = KDTree(len(fitted_indices))
-    for i, vi in enumerate(fitted_indices):
-        # Rest-pose coords keep neighbor lookup stable across deformation.
-        kd_follow.insert(all_originals[vi], i)
-    kd_follow.balance()
+    # Lazily build and cache the KDTree on first call.
+    # Rest-pose positions are used so neighbor selection stays stable
+    # as the mesh deforms across slider changes.
+    kd_follow = state._efit_cache.get('kd_follow')
+    if kd_follow is None:
+        kd_follow = KDTree(len(fitted_indices))
+        for i, vi in enumerate(fitted_indices):
+            # Rest-pose coords keep neighbor lookup stable across deformation.
+            kd_follow.insert(all_originals[vi], i)
+        kd_follow.balance()
+        state._efit_cache['kd_follow'] = kd_follow
 
     K_follow = min(p.follow_neighbors, len(fitted_indices))
 

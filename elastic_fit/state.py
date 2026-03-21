@@ -224,7 +224,7 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
     if not proximity_groups:
         return result
 
-    fitted_set = set(fitted_indices)
+    fitted_set = _efit_cache.get('fitted_set') or set(fitted_indices)
 
     for pg in proximity_groups:
         # Empty string means no group selected.
@@ -381,7 +381,7 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices, vg_membe
     Returns {group_name: {vi: weight}} for all groups with non-zero membership
     in fitted_indices.
     """
-    fitted_set = set(fitted_indices)
+    fitted_set = _efit_cache.get('fitted_set') or set(fitted_indices)
     offset_group_weights = {}
     for og in offset_groups:
         # Empty string means no group selected.
