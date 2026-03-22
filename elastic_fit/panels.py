@@ -10,6 +10,7 @@ from bpy.types import Panel
 
 from . import _meta
 from . import state
+from . import deps
 from . import updater
 from .state import _has_blockers_cached, PANEL_CATEGORY
 from .properties import _resolve_vg_name
@@ -295,6 +296,18 @@ def _draw_offset_fine_tuning(layout, p, in_preview):
 def _draw_misc(layout, p):
     layout.prop(p, "cleanup")
     layout.operator("efit.reset_defaults", icon='LOOP_BACK')
+
+    # Performance packages install button — shown only when pykdtree is missing.
+    if not deps.PYKDTREE_AVAILABLE:
+        layout.separator()
+        col = layout.column(align=True)
+        col.label(text="Optional: faster preserve-follow", icon='INFO')
+        from .operators import EFIT_OT_install_deps
+        if EFIT_OT_install_deps._installing:
+            col.label(text="Installing pykdtree…", icon='TIME')
+        elif EFIT_OT_install_deps._last_message:
+            col.label(text=EFIT_OT_install_deps._last_message, icon='ERROR')
+        col.operator("efit.install_deps", icon='IMPORT')
 
 
 def _draw_armature_display(layout, p):

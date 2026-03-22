@@ -12,6 +12,7 @@ import bmesh
 import bpy
 
 from . import state
+from . import deps
 from .state import EFIT_PREFIX, _calc_subdivisions
 from .properties import _resolve_vg_name
 
@@ -520,38 +521,70 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     fi_arr = np.array(fitted_indices, dtype=np.int32)
     fitted_disp = pre_offset_positions - all_originals[fi_arr]
 
-    for vi in preserved_indices:
-        # mathutils.Vector only constructed here (one per preserved vertex)
-        # because find_n requires it — not inside the inner neighbor loop.
-        rest = all_originals[vi]
-        neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
+    if deps.PYKDTREE_AVAILABLE:
+        # --- Fast path: pykdtree batch query ---
+        # Build/reuse a pykdtree from rest-pose fitted positions (float32).
+        kd_follow = state._efit_cache.get('kd_follow')
+        if kd_follow is None:
+            fitted_rest = all_originals[fi_arr].astype(np.float32)
+            kd_follow = deps.BatchKDTree(fitted_rest)
+            state._efit_cache['kd_follow'] = kd_follow
 
-        # Accumulate in raw floats — avoids allocating a mathutils.Vector
-        # per neighbor (was 2 + 3*K Vector allocs per preserved vertex).
-        tx = ty = tz = 0.0
-        total_weight  = 0.0
+        pres_arr = all_originals[np.array(preserved_indices, dtype=np.int32)].astype(np.float32)
+        dists, idxs = kd_follow.query(pres_arr, k=K_follow)           # (N_pres, K)
+        inv_d = 1.0 / np.maximum(dists, np.float32(1e-4))             # (N_pres, K)
+        w_sum = inv_d.sum(axis=1, keepdims=True)                      # (N_pres, 1)
+        k_disp = fitted_disp.astype(np.float32)[idxs]                 # (N_pres, K, 3)
+        weighted = (k_disp * inv_d[:, :, None]).sum(axis=1) / w_sum   # (N_pres, 3)
 
-        for _co, idx, dist in neighbors:
-            d = fitted_disp[idx]
-            w  = 1.0 / max(dist, 0.0001)
-            tx += d[0] * w
-            ty += d[1] * w
-            tz += d[2] * w
-            total_weight += w
+        pres_indices_arr = np.array(preserved_indices, dtype=np.int64)
+        base_cols = pres_indices_arr * 3
+        magnitudes = np.abs(weighted).sum(axis=1)
+        mask = magnitudes >= 1e-7
+        if mask.any():
+            rest_coords = pres_arr[mask]
+            disp_scaled = weighted[mask] * np.float32(strength)
+            new_coords  = rest_coords + disp_scaled
+            cols = base_cols[mask]
+            co_buf[cols]     = new_coords[:, 0]
+            co_buf[cols + 1] = new_coords[:, 1]
+            co_buf[cols + 2] = new_coords[:, 2]
 
-        if total_weight > 0.0:
-            # Early-exit: skip co_buf write for zero-displacement vertices.
-            # Avoids 3 indexed writes when the weighted displacement is
-            # negligibly small (vertex is far from all deformed areas).
-            inv_w = 1.0 / total_weight
-            dx = tx * inv_w
-            dy = ty * inv_w
-            dz = tz * inv_w
-            if abs(dx) + abs(dy) + abs(dz) >= 1e-7:
-                base = vi * 3
-                co_buf[base]     = rest[0] + dx * strength
-                co_buf[base + 1] = rest[1] + dy * strength
-                co_buf[base + 2] = rest[2] + dz * strength
+    else:
+        # --- Fallback path: sequential mathutils.KDTree ---
+        kd_follow = state._efit_cache.get('kd_follow')
+        if kd_follow is None:
+            kd_follow = KDTree(len(fitted_indices))
+            for i, vi in enumerate(fitted_indices):
+                kd_follow.insert(all_originals[vi], i)
+            kd_follow.balance()
+            state._efit_cache['kd_follow'] = kd_follow
+
+        for vi in preserved_indices:
+            rest = all_originals[vi]
+            neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
+
+            tx = ty = tz = 0.0
+            total_weight  = 0.0
+
+            for _co, idx, dist in neighbors:
+                d = fitted_disp[idx]
+                w  = 1.0 / max(dist, 0.0001)
+                tx += d[0] * w
+                ty += d[1] * w
+                tz += d[2] * w
+                total_weight += w
+
+            if total_weight > 0.0:
+                inv_w = 1.0 / total_weight
+                dx = tx * inv_w
+                dy = ty * inv_w
+                dz = tz * inv_w
+                if abs(dx) + abs(dy) + abs(dz) >= 1e-7:
+                    base = vi * 3
+                    co_buf[base]     = rest[0] + dx * strength
+                    co_buf[base + 1] = rest[1] + dy * strength
+                    co_buf[base + 2] = rest[2] + dz * strength
 
     cloth.data.vertices.foreach_set("co", co_buf)
     cloth.data.update()
