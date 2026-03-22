@@ -233,6 +233,7 @@ def register():
 
 
 def unregister():
+    updater._cancel_event.set()
     state._bvh_cache.clear()
     for name in ('tab_change', 'preview_prop_update', 'smooth_mod_update',
                  'offset_group_influence_update', 'offset_group_name_update',

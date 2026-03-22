@@ -37,18 +37,17 @@ def _build_face_list(mesh_data):
 def _efit_save_originals(cloth):
     """Snapshot all vertex positions for undo and displacement math.
 
-    Returns (all_originals, undo_flat) where all_originals maps vertex index to
-    Vector and undo_flat is a flat float list suitable for custom property storage.
+    Returns (all_originals, undo_flat) where all_originals is an np.ndarray (N,3)
+    of float64 and undo_flat is a flat float list suitable for custom property
+    storage.  The ndarray replaces the former {int → mathutils.Vector} dict,
+    eliminating N Python object allocations per fit session.  Consume sites that
+    need Vector arithmetic must wrap: mathutils.Vector(all_originals[vi]).
     Uses foreach_get for a single C-level bulk read instead of per-vertex access.
     """
     n   = len(cloth.data.vertices)
     buf = np.empty(n * 3, dtype=np.float64)
     cloth.data.vertices.foreach_get("co", buf)
-    all_originals = {
-        i: mathutils.Vector((buf[i * 3], buf[i * 3 + 1], buf[i * 3 + 2]))
-        for i in range(n)
-    }
-    return all_originals, buf.tolist()
+    return buf.reshape(-1, 3), buf.tolist()
 
 
 def _efit_create_proxy(context, cloth, p):
@@ -409,7 +408,7 @@ def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
     cloth.data.vertices.foreach_get("co", co_buf)
     for vi in fitted_indices:
         pw     = proximity_weights[vi] if proximity_weights else 1.0
-        result = all_originals[vi] + smoothed[vi] * fit * pw
+        result = mathutils.Vector(all_originals[vi]) + smoothed[vi] * fit * pw
         base   = vi * 3
         co_buf[base]     = result.x
         co_buf[base + 1] = result.y
@@ -487,7 +486,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     cloth.data.vertices.foreach_get("co", co_buf)
 
     for vi in preserved_indices:
-        rest_pos  = all_originals[vi]
+        rest_pos  = mathutils.Vector(all_originals[vi])
         neighbors = kd_follow.find_n(rest_pos, K_follow)
 
         total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
@@ -495,7 +494,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
 
         for _co, idx, dist in neighbors:
             ni    = fitted_indices[idx]
-            disp  = mathutils.Vector(pre_offset_positions[ni]) - all_originals[ni]
+            disp  = mathutils.Vector(pre_offset_positions[ni]) - mathutils.Vector(all_originals[ni])
             w     = 1.0 / max(dist, 0.0001)
             total_disp   += disp * w
             total_weight += w

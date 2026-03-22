@@ -81,7 +81,7 @@ def _efit_preview_update(context):
         cloth.data.vertices.foreach_get("co", co_buf)
         for vi in fitted_indices:
             pw     = proximity_weights[vi] if proximity_weights else 1.0
-            result = all_originals[vi] + smoothed[vi] * fit * pw
+            result = mathutils.Vector(all_originals[vi]) + smoothed[vi] * fit * pw
             base   = vi * 3
             co_buf[base]     = result.x
             co_buf[base + 1] = result.y
@@ -143,13 +143,13 @@ def _efit_preview_update(context):
 
                 K_follow = min(p.follow_neighbors, len(fitted_indices))
                 for vi in preserved_indices:
-                    rest_pos  = all_originals[vi]
+                    rest_pos  = mathutils.Vector(all_originals[vi])
                     neighbors = kd_follow.find_n(rest_pos, K_follow)
                     total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
                     total_weight = 0.0
                     for _co, idx, dist in neighbors:
                         ni    = fitted_indices[idx]
-                        disp  = mathutils.Vector(current_positions[ni]) - all_originals[ni]
+                        disp  = mathutils.Vector(current_positions[ni]) - mathutils.Vector(all_originals[ni])
                         w     = 1.0 / max(dist, 0.0001)
                         total_disp   += disp * w
                         total_weight += w

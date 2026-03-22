@@ -373,7 +373,7 @@ class EFIT_OT_preview_cancel(Operator):
             cloth.data.vertices.foreach_set("co", np.asarray(flat, dtype=np.float64))
         else:
             all_originals = c['all_originals']
-            for vi, co in all_originals.items():
+            for vi, co in enumerate(all_originals):
                 cloth.data.vertices[vi].co = co
         cloth.data.update()
 

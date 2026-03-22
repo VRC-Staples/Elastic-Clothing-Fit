@@ -7,7 +7,6 @@
 import contextlib
 import gzip
 import hashlib
-import io
 import json
 import os
 import re
@@ -43,6 +42,10 @@ _state = {
 
 # Protects all multi-key _state write sequences from concurrent read/write tears.
 _state_lock = threading.Lock()
+
+# Set during unregister() to cancel any in-flight retry sleep in
+# _urlopen_with_retry, preventing a blocked thread from outliving the addon.
+_cancel_event = threading.Event()
 
 # Module-level thread refs used to enforce re-entry guards.
 _active_check_thread    = None
@@ -195,7 +198,7 @@ def _installed_nightly_ts():
     try:
         with open(_NIGHTLY_MARKER, 'r', encoding='utf-8') as fh:
             return fh.read().strip().split()[0]
-    except Exception:
+    except (FileNotFoundError, OSError, IndexError, ValueError):
         return ''
 
 
@@ -267,7 +270,8 @@ def _urlopen_with_retry(req_or_opener, req=None, timeout=10, max_retries=3):
                 raise
             if attempt == max_retries - 1:
                 raise
-            time.sleep(2 ** attempt)
+            if _cancel_event.wait(timeout=2 ** attempt):
+                break
 
 
 def check_for_update():
@@ -614,7 +618,7 @@ def _download_thread(scripts_dir=''):
         if zip_path and os.path.exists(zip_path):
             try:
                 os.remove(zip_path)
-            except Exception:
+            except OSError:
                 pass
         with _state_lock:
             _state['status'] = 'error'
@@ -626,6 +630,16 @@ def _download_thread(scripts_dir=''):
 # ---------------------------------------------------------------------------
 # Install and restart
 # ---------------------------------------------------------------------------
+
+def _cleanup_install_files(script_path='', sidecar_path=''):
+    """Remove startup script and sidecar JSON, ignoring filesystem errors."""
+    for p in (script_path, sidecar_path):
+        if p:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
 
 def install_and_restart(reopen_filepath=''):
     """Write a one-shot startup script and relaunch Blender.
@@ -708,14 +722,7 @@ def install_and_restart(reopen_filepath=''):
         with _state_lock:
             _state['status'] = 'error'
             _state['error']  = f'Blender binary not found: {bpy.app.binary_path}'
-        try:
-            os.remove(script_path)
-        except Exception:
-            pass
-        try:
-            os.remove(sidecar_path)
-        except Exception:
-            pass
+        _cleanup_install_files(script_path, sidecar_path)
         return
 
     # Launch a new Blender instance then quit the current one.
@@ -733,14 +740,7 @@ def install_and_restart(reopen_filepath=''):
             _state['status'] = 'error'
             _state['error']  = f'Could not launch Blender: {exc}'
         # Remove the script and sidecar so they do not run stale on a manual restart.
-        try:
-            os.remove(script_path)
-        except Exception:
-            pass
-        try:
-            os.remove(sidecar_path)
-        except Exception:
-            pass
+        _cleanup_install_files(script_path, sidecar_path)
         return
 
     bpy.ops.wm.quit_blender()
