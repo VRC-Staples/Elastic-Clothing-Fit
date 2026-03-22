@@ -218,9 +218,9 @@ class EFIT_OT_fit(Operator):
             _snap_3 = _snap.reshape(-1, 3)
             _fi_arr = np.array(fitted_indices, dtype=np.int32)
             _pos_arr = _snap_3[_fi_arr]
-            pre_offset_positions = {vi: _pos_arr[i] for i, vi in enumerate(fitted_indices)}
+            pre_offset_positions = _pos_arr  # ndarray (N_fitted, 3), row i = fitted_indices[i]
         else:
-            pre_offset_positions = {}
+            pre_offset_positions = np.empty((0, 3), dtype=np.float64)
 
         # -- Offset fine-tuning --
         if offset_group_weights:

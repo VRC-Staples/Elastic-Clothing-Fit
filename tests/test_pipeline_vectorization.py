@@ -171,3 +171,92 @@ class TestSmoothingVectorization:
             "_efit_apply_smoothing does not contain 'fi_arr * 3'.  The base offset "
             "computation for the COO-style scatter is missing."
         )
+
+
+# ===========================================================================
+# TestOffsetTuningVectorization  (added in T02)
+#
+# Validates that _efit_apply_offset_tuning uses np.add.at scatter instead of
+# per-vertex scalar co_buf writes.
+# ===========================================================================
+
+class TestOffsetTuningVectorization:
+
+    @staticmethod
+    def _func_source() -> str:
+        src = _load("elastic_fit/pipeline.py")
+        body = _get_func_source(src, "_efit_apply_offset_tuning")
+        assert body, "_efit_apply_offset_tuning source not extractable"
+        return body
+
+    def test_offset_tuning_uses_np_add_at(self):
+        """_efit_apply_offset_tuning must use np.add.at for vectorized co_buf scatter.
+
+        The per-vertex inner loop wrote co_buf entries one-by-one with scalar
+        arithmetic.  The vectorized replacement collects vis/ws/poses arrays per
+        group and scatters deltas with np.add.at in a single pass.
+        """
+        body = self._func_source()
+        assert "np.add.at" in body, (
+            "_efit_apply_offset_tuning does not contain 'np.add.at'.  "
+            "The vectorized scatter has not replaced the per-vertex scalar writes."
+        )
+
+    def test_offset_tuning_no_per_vertex_scalar_loop(self):
+        """_efit_apply_offset_tuning must not contain 'for vi, w in og_weights.items()'.
+
+        The old inner loop iterated og_weights key-value pairs and wrote co_buf
+        entries one element at a time.  The vectorized path uses array collection
+        and np.add.at instead.
+        """
+        body = self._func_source()
+        assert "for vi, w in og_weights.items()" not in body, (
+            "_efit_apply_offset_tuning still contains the old per-vertex "
+            "'for vi, w in og_weights.items()' loop.  The vectorized scatter "
+            "has not been applied."
+        )
+
+
+# ===========================================================================
+# TestPreOffsetPositionsNdarray  (added in T02)
+#
+# Validates that pre_offset_positions is an ndarray (not a dict) in operators.py
+# and that preserve-follow accesses it by positional index (idx) not vertex index (ni).
+# ===========================================================================
+
+class TestPreOffsetPositionsNdarray:
+
+    def test_operators_no_pre_offset_dict_comprehension(self):
+        """operators.py must not assign pre_offset_positions as a dict comprehension.
+
+        The dict pattern ``{vi: _pos_arr[i] for i, vi in enumerate(fitted_indices)}``
+        created a {vertex_index: ndarray_row} dict that required keyed lookup in
+        _efit_apply_preserve_follow.  The ndarray migration stores _pos_arr directly
+        so row i is fitted_indices[i] -- positional indexing with no dict overhead.
+        """
+        src = _load("elastic_fit/operators.py")
+        assert "pre_offset_positions = {" not in src, (
+            "elastic_fit/operators.py still contains 'pre_offset_positions = {'.  "
+            "The dict comprehension has not been replaced by the _pos_arr ndarray."
+        )
+
+    def test_preserve_follow_uses_positional_indexing(self):
+        """_efit_apply_preserve_follow must access pre_offset_positions[idx], not [ni].
+
+        When pre_offset_positions was a {vi: row} dict, the lookup used the vertex
+        index ni (= fitted_indices[idx]) as the dict key.  After migration to a
+        positional ndarray, the correct access is pre_offset_positions[idx] where
+        idx is the positional index from the KDTree insertion.
+        """
+        src = _load("elastic_fit/pipeline.py")
+        body = _get_func_source(src, "_efit_apply_preserve_follow")
+        assert body, "_efit_apply_preserve_follow source not extractable"
+        assert "pre_offset_positions[idx]" in body, (
+            "_efit_apply_preserve_follow does not contain 'pre_offset_positions[idx]'.  "
+            "Positional ndarray indexing has not replaced the vertex-index dict lookup."
+        )
+        assert "pre_offset_positions[ni]" not in body, (
+            "_efit_apply_preserve_follow still contains 'pre_offset_positions[ni]'.  "
+            "The old vertex-index dict lookup has not been replaced by positional "
+            "indexing pre_offset_positions[idx]."
+        )

@@ -463,16 +463,23 @@ def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
         mult_delta = og.influence / 100.0 - 1.0
         if abs(mult_delta) < 0.0001:
             continue
-        for vi, w in og_weights.items():
-            pos = vi_to_pos.get(vi)
-            if pos is not None:
-                n     = cloth_body_normals[pos]
-                delta = base_offset * mult_delta * w
-                base  = vi * 3
-                co_buf[base]     += n[0] * delta
-                co_buf[base + 1] += n[1] * delta
-                co_buf[base + 2] += n[2] * delta
-                changed = True
+        # Collect arrays for vectorized scatter — filter to vertices
+        # that have a positional mapping in vi_to_pos.
+        vis_raw = np.array(list(og_weights.keys()), dtype=np.int32)
+        ws_raw  = np.array(list(og_weights.values()), dtype=np.float64)
+        mask    = np.array([v in vi_to_pos for v in vis_raw], dtype=bool)
+        if not np.any(mask):
+            continue
+        vis   = vis_raw[mask]
+        ws    = ws_raw[mask]
+        poses = np.array([vi_to_pos[v] for v in vis], dtype=np.int32)
+        # deltas shape: (M, 3) — normal * scalar delta per vertex
+        deltas = cloth_body_normals[poses] * (base_offset * mult_delta * ws[:, None])
+        bases  = vis * 3
+        np.add.at(co_buf, bases,     deltas[:, 0])
+        np.add.at(co_buf, bases + 1, deltas[:, 1])
+        np.add.at(co_buf, bases + 2, deltas[:, 2])
+        changed = True
     if changed:
         cloth.data.vertices.foreach_set("co", co_buf)
     cloth.data.update()
@@ -521,7 +528,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
 
         for _co, idx, dist in neighbors:
             ni = fitted_indices[idx]
-            cp = pre_offset_positions[ni]   # numpy (3,) row
+            cp = pre_offset_positions[idx]   # ndarray row by positional index
             ao = all_originals[ni]           # numpy (3,) row
             w  = 1.0 / max(dist, 0.0001)
             tx += (cp[0] - ao[0]) * w
