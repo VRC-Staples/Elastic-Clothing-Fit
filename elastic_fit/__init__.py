@@ -53,7 +53,6 @@ from .operators import (
     EFIT_OT_check_update,
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
-    EFIT_OT_install_deps,
 )
 from .armature_ops import (
     EFIT_OT_armature_display,
@@ -129,7 +128,6 @@ _classes = (
     EFIT_OT_check_update,
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
-    EFIT_OT_install_deps,
     EFIT_OT_armature_display,
     EFIT_OT_merge_armatures,
     EFIT_OT_mesh_split,
@@ -200,12 +198,8 @@ def register():
     from . import _meta
     _meta.ADDON_VERSION = tuple(bl_info['version'])
 
-    # Attempt to import optional performance packages installed in prior sessions.
-    _pkg_found = deps.attempt_import()
-    if _pkg_found:
-        print("[ECF] deps: pykdtree available — preserve-follow is accelerated.")
-    else:
-        print("[ECF] deps: pykdtree not found — using mathutils.KDTree fallback.")
+    # Load pykdtree from the bundled wheel (installed on first launch, zero user action needed).
+    deps.attempt_import()
 
     for c in _classes:
         bpy.utils.register_class(c)

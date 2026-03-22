@@ -330,6 +330,17 @@ def cmd_build(args):
     """build subcommand: read version, create zip, run deployment test."""
     version = _read_version()
     nightly = getattr(args, 'nightly', False)
+
+    # Verify bundled wheels are present — they should be committed to git.
+    wheels_dir = _ADDON_DIR / "wheels"
+    bundled_wheels = list(wheels_dir.glob("pykdtree-*.whl")) if wheels_dir.is_dir() else []
+    if not bundled_wheels:
+        print(
+            "WARNING: elastic_fit/wheels/ contains no pykdtree wheels.\n"
+            "         Run: python tools/fetch_wheels.py\n"
+            "         then commit the downloaded .whl files before building."
+        )
+
     zip_path = _build_zip(version, nightly=nightly)
     digest   = _sha256_file(zip_path)
     print(f"Built: {zip_path}")

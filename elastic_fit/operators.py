@@ -703,42 +703,4 @@ class EFIT_OT_install_restart(Operator):
         return {'FINISHED'}
 
 
-# ---------------------------------------------------------------------------
-# Performance dependency installer
-# ---------------------------------------------------------------------------
-
-class EFIT_OT_install_deps(Operator):
-    """Install optional performance packages (pykdtree) into Blender's Python."""
-    bl_idname      = "efit.install_deps"
-    bl_label       = "Install Performance Packages"
-    bl_description = (
-        "Install pykdtree into Blender's Python — accelerates preserve-follow "
-        "from ~60-130ms to ~1-2ms per preview tick. Requires internet access."
-    )
-    bl_options = {'REGISTER'}
-
-    # Tracks install state across operator invocations in the same session.
-    _installing: bool = False
-    _last_message: str = ""
-
-    @classmethod
-    def poll(cls, context):
-        return not deps.PYKDTREE_AVAILABLE and not EFIT_OT_install_deps._installing
-
-    def execute(self, context):
-        EFIT_OT_install_deps._installing = True
-        EFIT_OT_install_deps._last_message = "Installing pykdtree…"
-
-        def _on_done(success, message):
-            EFIT_OT_install_deps._installing = False
-            EFIT_OT_install_deps._last_message = message
-            # Force panel redraw so the status updates immediately.
-            for window in bpy.context.window_manager.windows:
-                for area in window.screen.areas:
-                    if area.type == 'VIEW_3D':
-                        area.tag_redraw()
-
-        deps.install_async(on_complete=_on_done)
-        return {'FINISHED'}
-
 

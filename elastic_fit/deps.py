@@ -1,20 +1,26 @@
 # deps.py
-# Optional dependency management for performance-critical third-party packages.
+# Bundled dependency loader for performance-critical third-party packages.
 #
-# pykdtree is a fast KD-tree with OpenMP-enabled batch queries (~66 KB wheel).
-# It replaces the sequential mathutils.KDTree.find_n loop in the preserve-follow
-# section and cuts ~60-130ms per preview tick down to ~1-2ms on ECF_Test scale.
+# pykdtree is a fast KD-tree with OpenMP-enabled batch queries (~66 KB wheel on Windows,
+# ~350 KB on macOS/Linux). It replaces the sequential mathutils.KDTree.find_n loop in the
+# preserve-follow section, cutting ~60-130ms per preview tick down to ~1-2ms on ECF_Test scale.
+#
+# Bundled wheels live at elastic_fit/wheels/ and are committed to the repository.
+# On first addon load, attempt_import() installs the matching wheel into Blender's
+# user scripts/modules directory silently — no network access required, no user action needed.
 #
 # Import rules:
 #   - Import this module at the top of preview.py and pipeline.py.
 #   - Check `deps.PYKDTREE_AVAILABLE` before using `deps.BatchKDTree`.
-#   - When unavailable, fall back to mathutils.KDTree (existing behaviour).
+#   - When unavailable (unsupported platform / install failed), fall back to mathutils.KDTree.
 
-import sys
 import os
+import pathlib
+import platform
 import site
+import struct
 import subprocess
-import threading
+import sys
 
 import bpy
 
@@ -28,7 +34,6 @@ PYKDTREE_AVAILABLE: bool = False
 #: The pykdtree.kdtree.KDTree class, or None when not available.
 BatchKDTree = None
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -39,7 +44,7 @@ def _modules_path() -> str:
 
 
 def _ensure_sys_path(modules_path: str) -> None:
-    """Add modules_path to sys.path so Blender can find installed packages."""
+    """Add *modules_path* to sys.path and site directories."""
     if modules_path not in sys.path:
         sys.path.insert(0, modules_path)
     site.addsitedir(modules_path)
@@ -57,65 +62,131 @@ def _try_import() -> bool:
         return False
 
 
+def _python_tag() -> str:
+    """Return the cpython ABI tag for the running interpreter, e.g. 'cp311'."""
+    major = sys.version_info.major
+    minor = sys.version_info.minor
+    return f"cp{major}{minor}"
+
+
+def _platform_tag() -> str:
+    """Return the wheel platform tag for the current OS/arch, or '' if unknown."""
+    system = platform.system()
+    machine = platform.machine().lower()
+
+    if system == "Windows":
+        # Blender only ships 64-bit; ARM Windows is uncommon but handled.
+        if machine in ("amd64", "x86_64"):
+            return "win_amd64"
+        if machine == "arm64":
+            return "win_arm64"
+
+    if system == "Darwin":
+        if machine == "arm64":
+            return "macosx_14_0_arm64"
+        return "macosx_13_0_x86_64"
+
+    if system == "Linux":
+        if machine in ("x86_64", "amd64"):
+            return "manylinux2014_x86_64"
+        if "aarch64" in machine or "arm64" in machine:
+            return "manylinux2014_aarch64"
+
+    return ""
+
+
+def _find_bundled_wheel() -> "pathlib.Path | None":
+    """Locate the bundled .whl file that matches the current Python/platform.
+
+    Wheels are stored in elastic_fit/wheels/ alongside the addon source.
+    Returns the path if a compatible wheel is found, else None.
+    """
+    wheels_dir = pathlib.Path(__file__).parent / "wheels"
+    if not wheels_dir.is_dir():
+        return None
+
+    py_tag = _python_tag()
+    plat_tag = _platform_tag()
+    if not plat_tag:
+        return None
+
+    for whl in wheels_dir.glob("pykdtree-*.whl"):
+        name = whl.name
+        if py_tag in name and plat_tag in name:
+            return whl
+
+    return None
+
+
+def _install_bundled_wheel(modules_path: str) -> bool:
+    """Install the bundled pykdtree wheel into *modules_path*.
+
+    Uses ``pip install --no-deps --target`` so only pykdtree itself is installed
+    (numpy is already available in Blender's bundled Python). Returns True on
+    success, False on any failure.
+    """
+    wheel = _find_bundled_wheel()
+    if wheel is None:
+        print("[ECF] deps: no bundled wheel for this platform — skipping install.")
+        return False
+
+    try:
+        subprocess.check_call(
+            [
+                sys.executable,
+                "-m", "pip",
+                "install",
+                "--no-deps",
+                "--upgrade",
+                "--target", modules_path,
+                str(wheel),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        return True
+    except subprocess.CalledProcessError as exc:
+        print(f"[ECF] deps: bundled wheel install failed: {exc}")
+        return False
+    except Exception as exc:
+        print(f"[ECF] deps: bundled wheel install error: {exc}")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def attempt_import() -> bool:
-    """Try to import pykdtree from the Blender user scripts/modules directory.
+    """Try to import pykdtree, installing the bundled wheel if needed.
 
-    Called once during addon registration. Adds the user modules path to
-    sys.path first so packages installed via ``install_async()`` are found on
-    subsequent Blender sessions without a restart.
+    Called once during addon registration. The sequence is:
+      1. Add the user modules directory to sys.path.
+      2. Try importing pykdtree — succeeds on second+ Blender launches after
+         a prior install.
+      3. If import fails, install the bundled wheel and retry once.
+      4. If still unavailable (unsupported platform, pip absent), log a warning
+         and return False. The caller falls back to mathutils.KDTree.
 
     Returns True if pykdtree is now available.
     """
-    _ensure_sys_path(_modules_path())
-    return _try_import()
-
-
-def install_async(on_complete=None) -> None:
-    """Install pykdtree into Blender's user scripts/modules directory in a
-    background thread so the UI stays responsive.
-
-    Args:
-        on_complete: optional callable(success: bool, message: str) invoked on
-                     the main thread (via bpy.app.timers) when the install
-                     finishes.
-    """
     modules_path = _modules_path()
+    _ensure_sys_path(modules_path)
 
-    def _run():
-        success = False
-        message = ""
-        try:
-            subprocess.check_call(
-                [
-                    sys.executable,
-                    "-m", "pip",
-                    "install",
-                    "--upgrade",
-                    "--target", modules_path,
-                    "pykdtree",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            _ensure_sys_path(modules_path)
-            success = _try_import()
-            message = "pykdtree installed — preserve-follow is now accelerated." if success \
-                      else "pykdtree installed but import failed; please restart Blender."
-        except subprocess.CalledProcessError as exc:
-            message = f"pykdtree install failed: {exc}"
-        except Exception as exc:
-            message = f"pykdtree install error: {exc}"
+    if _try_import():
+        return True
 
-        print(f"[ECF] deps: {message}")
+    # First launch: wheel not yet installed — install from bundle.
+    print("[ECF] deps: installing pykdtree from bundled wheel…")
+    installed = _install_bundled_wheel(modules_path)
+    if not installed:
+        print("[ECF] deps: pykdtree unavailable — preserve-follow uses mathutils.KDTree fallback.")
+        return False
 
-        if on_complete is not None:
-            def _notify():
-                on_complete(success, message)
-                return None  # do not reschedule
-            bpy.app.timers.register(_notify, first_interval=0.0)
+    _ensure_sys_path(modules_path)
+    if _try_import():
+        print("[ECF] deps: pykdtree installed — preserve-follow is accelerated.")
+        return True
 
-    threading.Thread(target=_run, daemon=True).start()
+    print("[ECF] deps: pykdtree installed but import failed; will retry on next Blender launch.")
+    return False
