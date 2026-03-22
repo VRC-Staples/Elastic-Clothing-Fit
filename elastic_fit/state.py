@@ -402,9 +402,8 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p,
     are computed once at fit time rather than rebuilt on every slider tick.
 
     ``return_array=True``: return the raw ``np.ndarray (N, 3)`` float64 instead
-    of a ``{vi: Vector}`` dict.  The preview path uses this to avoid N
-    ``mathutils.Vector`` allocations per tick; the pipeline one-shot path uses
-    the default dict form.
+    of a ``{vi: Vector}`` dict.  Both the preview path and the pipeline path now
+    use this flag to avoid N ``mathutils.Vector`` allocations per call.
 
     Returns a new dict {vi: Vector} with smoothed displacements, or an
     ``np.ndarray (N, 3)`` float64 when return_array=True.

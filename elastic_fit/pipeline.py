@@ -41,7 +41,7 @@ def _efit_save_originals(cloth):
     of float64 and undo_flat is a flat float list suitable for custom property
     storage.  The ndarray replaces the former {int → mathutils.Vector} dict,
     eliminating N Python object allocations per fit session.  Consume sites that
-    need Vector arithmetic must wrap: mathutils.Vector(all_originals[vi]).
+    need Vector arithmetic must wrap individual rows as mathutils.Vector.
     Uses foreach_get for a single C-level bulk read instead of per-vertex access.
     """
     n   = len(cloth.data.vertices)
@@ -403,21 +403,34 @@ def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
     vertices above the median-scaled threshold blend hard toward their neighbor average
     while those below blend lightly.
     """
-    smoothed = state._smooth_displacements(
-        cloth_displacements, fitted_indices, cloth_adj, p)
+    smoothed_arr = state._smooth_displacements(
+        cloth_displacements, fitted_indices, cloth_adj, p, return_array=True)
 
     # Write all fitted vertices in a single foreach_set call instead of
     # N individual Python-to-C bridge crossings.
+    # Read the whole mesh first so non-fitted vertices are preserved as-is.
     n_verts = len(cloth.data.vertices)
     co_buf  = np.empty(n_verts * 3, dtype=np.float64)
     cloth.data.vertices.foreach_get("co", co_buf)
-    for vi in fitted_indices:
-        pw     = proximity_weights[vi] if proximity_weights else 1.0
-        result = mathutils.Vector(all_originals[vi]) + smoothed[vi] * fit * pw
-        base   = vi * 3
-        co_buf[base]     = result.x
-        co_buf[base + 1] = result.y
-        co_buf[base + 2] = result.z
+
+    fi_arr = np.array(fitted_indices, dtype=np.int32)
+
+    # Vectorised position computation: all_originals[fi_arr] is (N_fitted, 3);
+    # smoothed_arr rows align by position with fitted_indices.
+    if proximity_weights is not None:
+        pw_arr = np.fromiter(
+            (proximity_weights[vi] for vi in fitted_indices),
+            dtype=np.float64, count=len(fitted_indices))
+        fitted_pos = all_originals[fi_arr] + smoothed_arr * (fit * pw_arr[:, None])
+    else:
+        fitted_pos = all_originals[fi_arr] + smoothed_arr * fit
+
+    # Scatter fitted positions into co_buf using COO-style index assignment.
+    base_arr = fi_arr * 3
+    co_buf[base_arr]     = fitted_pos[:, 0]
+    co_buf[base_arr + 1] = fitted_pos[:, 1]
+    co_buf[base_arr + 2] = fitted_pos[:, 2]
+
     cloth.data.vertices.foreach_set("co", co_buf)
 
     cloth.data.update()
