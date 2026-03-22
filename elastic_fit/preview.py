@@ -63,14 +63,10 @@ def _efit_preview_update(context):
 
         if _dev_mode:
             _t0 = time.perf_counter()
-        adjusted_displacements = {}
-        for vi in fitted_indices:
-            if offset_delta != 0.0 and vi in cloth_body_normals:
-                d = cloth_displacements[vi].copy()
-                d += cloth_body_normals[vi] * offset_delta
-                adjusted_displacements[vi] = d
-            else:
-                adjusted_displacements[vi] = cloth_displacements[vi]
+        if offset_delta != 0.0:
+            adjusted = cloth_displacements + cloth_body_normals * offset_delta
+        else:
+            adjusted = cloth_displacements
         if _dev_mode:
             _t_adj = time.perf_counter() - _t0
 
@@ -80,7 +76,7 @@ def _efit_preview_update(context):
         if _dev_mode:
             _t0 = time.perf_counter()
         smoothed_arr = state._smooth_displacements(
-            adjusted_displacements, fitted_indices, cloth_adj, p,
+            adjusted, fitted_indices, cloth_adj, p,
             return_array=True)
         if _dev_mode:
             _t_smooth = time.perf_counter() - _t0
@@ -168,15 +164,16 @@ def _efit_preview_update(context):
         has_offset_work = bool(offset_group_weights and original_offset != 0.0)
         needs_preserve  = has_preserve and preserved_indices and p.follow_strength > 0.0
         if has_offset_work or needs_preserve:
-            # fitted_pos rows align with fitted_indices by position.
-            pre_offset_positions = {vi: fitted_pos[i] for i, vi in enumerate(fitted_indices)}
+            # fitted_pos rows align with fitted_indices by position — use directly.
+            pre_offset_positions = fitted_pos
         else:
-            pre_offset_positions = {}
+            pre_offset_positions = None
 
         # Accumulate offset group deltas directly into co_buf.
         if _dev_mode:
             _t0 = time.perf_counter()
         if has_offset_work:
+            vi_to_pos = c.get('smooth_vi_to_pos', {})
             for og in source_groups:
                 og_name = _resolve_vg_name(og.group_name)
                 if not og_name:
@@ -189,13 +186,14 @@ def _efit_preview_update(context):
                 if abs(mult_delta) < 0.0001:
                     continue
                 for vi, w in weights.items():
-                    if vi in cloth_body_normals:
-                        n     = cloth_body_normals[vi]
+                    pos = vi_to_pos.get(vi)
+                    if pos is not None:
+                        n     = cloth_body_normals[pos]
                         delta = original_offset * mult_delta * w
                         base  = vi * 3
-                        co_buf[base]     += n.x * delta
-                        co_buf[base + 1] += n.y * delta
-                        co_buf[base + 2] += n.z * delta
+                        co_buf[base]     += n[0] * delta
+                        co_buf[base + 1] += n[1] * delta
+                        co_buf[base + 2] += n[2] * delta
         if _dev_mode:
             _t_offgrp = time.perf_counter() - _t0
 
@@ -215,15 +213,16 @@ def _efit_preview_update(context):
 
             strength = p.follow_strength
             K_follow = min(p.follow_neighbors, len(fitted_indices))
-            current_positions = pre_offset_positions
+            current_positions = pre_offset_positions  # ndarray (N_fitted, 3)
             for vi in preserved_indices:
                 rest = all_originals[vi]
                 neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
                 tx = ty = tz = 0.0
                 total_weight = 0.0
                 for _co, idx, dist in neighbors:
+                    # idx is the positional index in fitted_indices; use directly.
+                    cp = current_positions[idx]  # numpy (3,) row
                     ni = fitted_indices[idx]
-                    cp = current_positions[ni]   # numpy (3,) row
                     ao = all_originals[ni]        # numpy (3,) row
                     w  = 1.0 / max(dist, 0.0001)
                     tx += (cp[0] - ao[0]) * w

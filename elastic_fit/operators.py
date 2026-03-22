@@ -225,7 +225,8 @@ class EFIT_OT_fit(Operator):
         # -- Offset fine-tuning --
         if offset_group_weights:
             _efit_apply_offset_tuning(
-                cloth, cloth_body_normals, offset_group_weights, source_groups, p)
+                cloth, cloth_body_normals, offset_group_weights, source_groups, p,
+                fitted_indices=fitted_indices)
 
         # -- Move preserved vertices to follow nearby fitted areas --
         if has_preserve and preserved_indices and fitted_indices:

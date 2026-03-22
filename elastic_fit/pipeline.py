@@ -285,14 +285,16 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
 
     # Compute per-fitted-vertex displacement via inverse-distance weighted
     # barycentric interpolation from the three nearest proxy face vertices.
-    cloth_displacements = {}
-    for vi in fitted_indices:
+    # Output is np.ndarray (N_fitted, 3) float64; row i corresponds to
+    # fitted_indices[i] (positional indexing convention).
+    N_fitted = len(fitted_indices)
+    cloth_displacements = np.zeros((N_fitted, 3), dtype=np.float64)
+    for pos_i, vi in enumerate(fitted_indices):
         _vi_co = mathutils.Vector((_cc_buf[vi*3], _cc_buf[vi*3+1], _cc_buf[vi*3+2]))
         loc, normal, face_idx, dist = bvh.find_nearest(_vi_co)
 
         if face_idx is None:
-            cloth_displacements[vi] = mathutils.Vector((0.0, 0.0, 0.0))
-            continue
+            continue  # row already zeros
 
         face = proxy_polys[face_idx]
         fv   = list(face.vertices)
@@ -306,7 +308,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
         for fi, w in zip(fv, weights):
             avg_disp += (proxy_post[fi] - proxy_pre[fi]) * (w / w_sum)
 
-        cloth_displacements[vi] = avg_disp
+        cloth_displacements[pos_i] = [avg_disp.x, avg_disp.y, avg_disp.z]
 
     # Cache the nearest body-surface normal per fitted vertex.  The preview
     # engine uses these to apply offset-slider changes live without re-running
@@ -323,15 +325,15 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
         state._bvh_cache.clear()
         state._bvh_cache[body_key] = bvh_body
 
-    cloth_body_normals = {}
+    cloth_body_normals = np.zeros((N_fitted, 3), dtype=np.float64)
     cloth_body_distances = {}
-    for vi in fitted_indices:
+    for pos_i, vi in enumerate(fitted_indices):
         _vi_co = mathutils.Vector((_cc_buf[vi*3], _cc_buf[vi*3+1], _cc_buf[vi*3+2]))
         loc, normal, face_idx, dist = bvh_body.find_nearest(_vi_co)
         if normal is not None:
-            cloth_body_normals[vi] = normal.normalized()
-        else:
-            cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
+            n_normed = normal.normalized()
+            cloth_body_normals[pos_i] = [n_normed.x, n_normed.y, n_normed.z]
+        # else: row already zeros
         if dist is None:
             cloth_body_distances[vi] = 0.0
         elif loc is not None and normal is not None:
@@ -422,7 +424,7 @@ def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
 
 
 def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
-                              source_groups, p):
+                              source_groups, p, fitted_indices=None):
     """Apply per-group offset influence multipliers along cached body-surface normals.
 
     A group influence of 100% is neutral (no change); 0% pulls the vertices flush to
@@ -433,6 +435,10 @@ def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
     co_buf  = np.empty(n_verts * 3, dtype=np.float64)
     cloth.data.vertices.foreach_get("co", co_buf)
     changed = False
+    # Build vi→positional-index map for ndarray access.
+    vi_to_pos = {}
+    if fitted_indices is not None:
+        vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
     for og in source_groups:
         og_name = _resolve_vg_name(og.group_name)
         if not og_name:
@@ -445,13 +451,14 @@ def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
         if abs(mult_delta) < 0.0001:
             continue
         for vi, w in og_weights.items():
-            if vi in cloth_body_normals:
-                n     = cloth_body_normals[vi]
+            pos = vi_to_pos.get(vi)
+            if pos is not None:
+                n     = cloth_body_normals[pos]
                 delta = base_offset * mult_delta * w
                 base  = vi * 3
-                co_buf[base]     += n.x * delta
-                co_buf[base + 1] += n.y * delta
-                co_buf[base + 2] += n.z * delta
+                co_buf[base]     += n[0] * delta
+                co_buf[base + 1] += n[1] * delta
+                co_buf[base + 2] += n[2] * delta
                 changed = True
     if changed:
         cloth.data.vertices.foreach_set("co", co_buf)

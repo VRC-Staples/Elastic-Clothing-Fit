@@ -410,16 +410,22 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p,
     ``np.ndarray (N, 3)`` float64 when return_array=True.
     """
     # Build (N, 3) float64 array — row i corresponds to fitted_indices[i].
-    # np.fromiter with count= pre-allocates the buffer and streams from the
-    # generator with no intermediate Python list (vs np.array([...]) which
-    # builds a list first).  Flattened then reshaped to avoid a tuple-of-tuples
-    # intermediate (each .to_tuple() returns a 3-float tuple).
+    # Fast-path: when displacements is already an ndarray (pipeline and preview
+    # paths after S02 migration), copy directly — skip the .to_tuple() generator.
     N = len(fitted_indices)
-    smoothed_arr = np.fromiter(
-        (x for vi in fitted_indices for x in displacements[vi].to_tuple()),
-        dtype=np.float64,
-        count=N * 3,
-    ).reshape(N, 3)
+    if isinstance(displacements, np.ndarray):
+        smoothed_arr = displacements.copy()
+    else:
+        # Legacy dict-of-Vector fallback (dead code after migration; kept for safety).
+        # np.fromiter with count= pre-allocates the buffer and streams from the
+        # generator with no intermediate Python list (vs np.array([...]) which
+        # builds a list first).  Flattened then reshaped to avoid a tuple-of-tuples
+        # intermediate (each .to_tuple() returns a 3-float tuple).
+        smoothed_arr = np.fromiter(
+            (x for vi in fitted_indices for x in displacements[vi].to_tuple()),
+            dtype=np.float64,
+            count=N * 3,
+        ).reshape(N, 3)
     # Pull pre-built topology from cache (None on pipeline one-shot path —
     # _apply_disp_smoothing will build them locally in that case).
     vi_to_pos = _efit_cache.get('smooth_vi_to_pos')

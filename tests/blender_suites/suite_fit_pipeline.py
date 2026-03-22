@@ -121,6 +121,9 @@ p.fit_amount = old_amount
 # ============================================================
 print("\n=== STEP 5: Verify no clipping (ray cast inside-test) ===")
 from mathutils.bvhtree import BVHTree
+import mathutils
+
+import numpy as np
 
 # Maximum acceptable fraction of fitted vertices that may be inside the body.
 # 10% tolerance reflects the test mesh's baseline clipping characteristics --
@@ -138,10 +141,14 @@ body_faces = [tuple(f.vertices) for f in body.data.polygons]
 bvh        = BVHTree.FromPolygons(body_verts, body_faces)
 
 fitted_indices = state._efit_cache.get("fitted_indices", [])
-body_normals   = state._efit_cache.get("cloth_body_normals", {})
+body_normals   = state._efit_cache.get("cloth_body_normals", None)
 
 _assert_true(len(fitted_indices) > 0, "fitted_indices non-empty in cache")
-_assert_true(len(body_normals) > 0,   "cloth_body_normals non-empty in cache")
+_assert_true(body_normals is not None and len(body_normals) > 0,
+             "cloth_body_normals non-empty in cache")
+
+# Build positional index map for ndarray access.
+vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
 
 # Inside-outside test via outward ray cast.
 #
@@ -162,18 +169,24 @@ clipping  = 0
 no_normal = 0
 
 for vi in fitted_indices:
-    n = body_normals.get(vi)
-    if n is None or n.length < 1e-6:
+    pos = vi_to_pos.get(vi)
+    if pos is None:
+        no_normal += 1
+        continue
+    n = body_normals[pos]
+    n_len = np.linalg.norm(n)
+    if n_len < 1e-6:
         no_normal += 1
         continue
 
     co     = cloth.data.vertices[vi].co
-    n_unit = n.normalized()
+    n_unit = n / n_len
+    n_unit_vec = mathutils.Vector(n_unit)
 
     # Nudge outward so the ray origin clears the body surface if the vertex
     # sits right on it (avoids self-hit at dist~0 on the surface polygon).
-    origin    = co + n_unit * RAY_NUDGE
-    direction = n_unit   # fire OUTWARD along body normal
+    origin    = co + n_unit_vec * RAY_NUDGE
+    direction = n_unit_vec   # fire OUTWARD along body normal
 
     hit_loc, hit_normal, hit_idx, hit_dist = bvh.ray_cast(origin, direction)
 
