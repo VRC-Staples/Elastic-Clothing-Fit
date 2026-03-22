@@ -108,7 +108,7 @@ class EFitProximityGroup(PropertyGroup):
             ('PRE_FIT',         "Pre-Fit",         "Use the original clothing position before any fitting"),
             ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Use the clothing position after the initial wrap to the body"),
         ],
-        default='PRE_FIT',
+        default='POST_SHRINKWRAP',
         update=_on_proximity_group_update,
     )
     proximity_start: FloatProperty(
@@ -533,7 +533,7 @@ class EFitProperties(PropertyGroup):
             ('PRE_FIT',         "Pre-Fit",         "Use the original clothing position before any fitting"),
             ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Use the clothing position after the initial wrap to the body"),
         ],
-        default='PRE_FIT',
+        default='POST_SHRINKWRAP',
     )
     proximity_start: FloatProperty(
         name="Start Distance",
@@ -576,8 +576,8 @@ class EFitProperties(PropertyGroup):
     # When True but no groups added, the global controls still apply.
     # Ungrouped vertices always get weight 1.0 (no falloff reduction).
     use_proximity_group_tuning: BoolProperty(
-        name="Per-Group Fine Tuning",
-        description="Give individual vertex groups their own proximity falloff settings",
+        name="Tune Per Group",
+        description="Set different proximity falloff settings for individual vertex groups",
         default=False,
     )
     proximity_groups: CollectionProperty(

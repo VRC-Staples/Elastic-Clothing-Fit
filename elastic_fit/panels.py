@@ -195,7 +195,9 @@ def _draw_proximity_falloff(layout, p, in_preview):
     if not p.use_proximity_falloff:
         return
 
-    layout.prop(p, "use_proximity_group_tuning")
+    sub = layout.row()
+    sub.separator(factor=1.0)
+    sub.prop(p, "use_proximity_group_tuning")
 
     if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
         # Per-group mode: draw one sub-box per group entry.
