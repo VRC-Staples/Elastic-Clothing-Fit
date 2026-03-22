@@ -50,10 +50,12 @@ def _efit_preview_update(context):
 
         adjusted_displacements = {}
         for vi in fitted_indices:
-            d = cloth_displacements[vi].copy()
             if offset_delta != 0.0 and vi in cloth_body_normals:
+                d = cloth_displacements[vi].copy()
                 d += cloth_body_normals[vi] * offset_delta
-            adjusted_displacements[vi] = d
+                adjusted_displacements[vi] = d
+            else:
+                adjusted_displacements[vi] = cloth_displacements[vi]
 
         # Re-run adaptive displacement smoothing with the current slider values.
         smoothed = state._smooth_displacements(

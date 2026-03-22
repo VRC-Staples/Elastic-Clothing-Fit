@@ -190,7 +190,11 @@ def _compute_proximity_weights(distances, fitted_indices, start, end, curve_key)
     span = max(end - start, 0.0001)
 
     vi_arr   = np.array(fitted_indices, dtype=np.int32)
-    dist_arr = np.array([distances.get(vi, 0.0) for vi in fitted_indices], dtype=np.float64)
+    dist_arr = np.fromiter(
+        (distances.get(vi, 0.0) for vi in fitted_indices),
+        dtype=np.float64,
+        count=len(fitted_indices),
+    )
     t_arr    = np.clip((dist_arr - start) / span, 0.0, 1.0)
 
     if curve_key == 'LINEAR':
@@ -304,12 +308,19 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
     dst_rows = np.array(_dst, dtype=np.int32)
     has_edges = len(src_rows) > 0
 
+    # Double-buffer ping-pong: pre-allocate two (N,3) buffers once.
+    # Each pass reads from buf_a and writes to buf_b; pointers swap at end of
+    # pass so the next pass reads the just-written result.  Zero allocations
+    # after setup — no per-pass smoothed_arr.copy().
+    buf_a = smoothed_arr.copy()
+    buf_b = np.empty_like(buf_a)
+
     for _pass in range(ds_passes):
         # --- Gradient computation (max distance to any fitted neighbor) ---
         # Vectorised: batch norm over all edges, scatter max to both endpoints.
         gradient = np.zeros(N, dtype=np.float64)
         if has_edges:
-            diffs = smoothed_arr[src_rows] - smoothed_arr[dst_rows]
+            diffs = buf_a[src_rows] - buf_a[dst_rows]
             norms = np.sqrt((diffs ** 2).sum(axis=1))
             np.maximum.at(gradient, src_rows, norms)
             np.maximum.at(gradient, dst_rows, norms)
@@ -326,7 +337,8 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
 
         # --- Neighbor averaging (inner loop; irregular adjacency prevents
         #     full vectorisation but uses direct array indexing not Vectors) ---
-        new_arr = smoothed_arr.copy()
+        # Write results into buf_b; buf_a is the read-only source this pass.
+        np.copyto(buf_b, buf_a)
         for i, vi in enumerate(fitted_indices):
             neighbors = cloth_adj[vi]
             if not neighbors:
@@ -334,11 +346,14 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
             neighbor_positions = [vi_to_pos[ni] for ni in neighbors if ni in vi_to_pos]
             if not neighbor_positions:
                 continue
-            avg = smoothed_arr[neighbor_positions].mean(axis=0)
-            new_arr[i] = smoothed_arr[i] * (1.0 - blend[i]) + avg * blend[i]
-        smoothed_arr = new_arr
+            avg = buf_a[neighbor_positions].mean(axis=0)
+            buf_b[i] = buf_a[i] * (1.0 - blend[i]) + avg * blend[i]
 
-    return smoothed_arr
+        # Swap: the written result becomes the source for the next pass.
+        buf_a, buf_b = buf_b, buf_a
+
+    # After the last swap, buf_a holds the final smoothed result.
+    return buf_a
 
 
 # ---------------------------------------------------------------------------
@@ -408,8 +423,9 @@ def _compute_offset_group_weights(cloth, offset_groups, fitted_indices, vg_membe
         vg_idx  = vg.index
         if vg_membership is not None and vg_idx in vg_membership:
             # Fast-path: weights already stored at build time — zero RNA reads.
-            weights = {vi: w for vi, w in vg_membership[vg_idx].items()
-                       if vi in fitted_set}
+            # vg_membership is keyed by fitted vertices only (built in pipeline.py
+            # from fitted_set_vg), so no additional fitted_set filter is needed.
+            weights = dict(vg_membership[vg_idx])
         else:
             weights = {}
             for v in cloth.data.vertices:

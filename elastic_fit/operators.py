@@ -469,6 +469,12 @@ class EFIT_OT_reset_defaults(Operator):
     bl_description = "Reset all sliders to their default values"
     bl_options     = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so slider resets cannot mutate
+        # mid-preview state and race with _efit_preview_update.
+        return not state._efit_cache
+
     def execute(self, context):
         p = context.scene.efit_props
         for prop_name in (
@@ -500,6 +506,12 @@ class EFIT_OT_offset_group_add(Operator):
     bl_description = "Add a vertex group whose offset influence can be fine-tuned"
     bl_options     = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so the offset group list cannot
+        # change mid-fit and cause stale weight lookups.
+        return not state._efit_cache
+
     def execute(self, context):
         item           = context.scene.efit_props.offset_groups.add()
         item.influence = 100
@@ -530,6 +542,12 @@ class EFIT_OT_proximity_group_add(Operator):
     bl_label       = "Add Proximity Group"
     bl_description = "Add a vertex group with its own proximity falloff settings"
     bl_options     = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so the proximity group list cannot
+        # change mid-fit and cause stale weight lookups.
+        return not state._efit_cache
 
     def execute(self, context):
         context.scene.efit_props.proximity_groups.add()

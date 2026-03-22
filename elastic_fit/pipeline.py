@@ -158,9 +158,10 @@ def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):
         # Everything else is frozen in place; no follow step is needed.
         # Iterate v.groups to avoid try/except-as-flow-control overhead.
         target_vg_indices = {
-            cloth.vertex_groups[_resolve_vg_name(eg.group_name)].index
+            cloth.vertex_groups[name].index
             for eg in p.exclusive_groups
-            if _resolve_vg_name(eg.group_name) and cloth.vertex_groups.get(_resolve_vg_name(eg.group_name))
+            for name in (_resolve_vg_name(eg.group_name),)
+            if name and cloth.vertex_groups.get(name)
         }
         fitted_set = set()
         for v in cloth.data.vertices:
@@ -207,7 +208,9 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
     _n_proxy = len(proxy.data.vertices)
     _buf_pre = np.empty(_n_proxy * 3, dtype=np.float64)
     proxy.data.vertices.foreach_get("co", _buf_pre)
-    proxy_pre = [mathutils.Vector(_buf_pre[i*3:i*3+3]) for i in range(_n_proxy)]
+    # reshape(-1,3) returns a view; list comprehension wraps each row into a
+    # mathutils.Vector without the i*3:i*3+3 slice allocation per element.
+    proxy_pre = [mathutils.Vector(row) for row in _buf_pre.reshape(-1, 3)]
 
     bpy.ops.object.select_all(action='DESELECT')
     proxy.select_set(True)
@@ -222,7 +225,7 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
     bpy.ops.object.modifier_apply(modifier=mod_sw.name)
     _buf_post = np.empty(_n_proxy * 3, dtype=np.float64)
     proxy.data.vertices.foreach_get("co", _buf_post)
-    proxy_post = [mathutils.Vector(_buf_post[i*3:i*3+3]) for i in range(_n_proxy)]
+    proxy_post = [mathutils.Vector(row) for row in _buf_post.reshape(-1, 3)]
 
     # Zero out displacement for proxy vertices that are topologically closer
     # to a preserved clothing vertex than a fitted one, so deformation does
