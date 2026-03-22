@@ -15,21 +15,6 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
 For developer documentation, see the [Wiki](../../wiki).
 
-> [!WARNING]
-> **Upgrading from v1.0.3 or earlier**
->
-> v1.0.4 changed the add-on from a single file to a package. Blender cannot upgrade this in place and the install will silently fail or break if you skip these steps.
->
-> **You must:**
-> 1. Open **Edit > Preferences > Add-ons** and disable **Elastic Clothing Fit**
-> 2. Click **Uninstall** to fully uninstall the old version
-> 3. **Restart Blender** before doing anything else
-> 4. Only after restarting, install the new zip normally
->
-> Skipping the restart between uninstalling and installing will leave stale files in place and the add-on will not work correctly.
->
-> This is a one-time issue for this specific upgrade. From v1.0.4 onward, future updates can be applied directly from inside Blender using the built-in update checker at the bottom of the panel.
-
 ## Features
 
 - **Simple workflow.** Select your body and clothing, click Fit. All fine-tuning options are tucked away in a collapsed Advanced Settings section.
