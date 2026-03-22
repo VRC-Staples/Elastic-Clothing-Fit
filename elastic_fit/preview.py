@@ -14,6 +14,12 @@ import bpy
 from . import state
 from .properties import _resolve_vg_name
 
+# Stores the per-section timings from the most recent tick when developer mode
+# is enabled.  None until the first tick completes with dev mode on.
+# Inspectable by headless benchmark scripts:
+#   import elastic_fit.preview as preview; print(preview._last_tick_timings)
+_last_tick_timings: "dict | None" = None
+
 
 def _efit_preview_update(context):
     """Reapply the cached fit to the clothing mesh using current slider values.
@@ -268,6 +274,17 @@ def _efit_preview_update(context):
                 f"  fset={_t_fset*1000:.2f}ms"
                 f"  TOTAL={_t_total*1000:.2f}ms"
             )
+            import elastic_fit.preview as _self_mod
+            _self_mod._last_tick_timings = {
+                'adj':      _t_adj,
+                'smooth':   _t_smooth,
+                'prox':     _t_prox,
+                'cobuf':    _t_cobuf,
+                'offgrp':   _t_offgrp,
+                'preserve': _t_preserve,
+                'fset':     _t_fset,
+                'total':    _t_total,
+            }
 
         if context.screen:
             for area in context.screen.areas:
