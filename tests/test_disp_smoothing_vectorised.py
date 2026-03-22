@@ -210,7 +210,7 @@ class TestVectorisedAveragingParity:
         adj = {0: [2], 1: [], 2: [0]}
         np_out = _apply_disp_smoothing_np(
             arr, fitted, adj, ds_passes=10,
-            thresh=1.0, dmin=0.1, dmax=0.9)
+            ds_thresh_mult=1.0, ds_min=0.1, ds_max=0.9)
         # v1 (row 1, no neighbours) must be unchanged
         for k in range(3):
             assert np_out[1][k] == pytest.approx(5.0, abs=1e-10), (
@@ -234,7 +234,7 @@ class TestVectorisedAveragingParity:
         adj = {0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2]}
         np_out = _apply_disp_smoothing_np(
             arr, fitted, adj, ds_passes=0,
-            thresh=1.0, dmin=0.1, dmax=0.9)
+            ds_thresh_mult=1.0, ds_min=0.1, ds_max=0.9)
         for i, row in enumerate(arr):
             for k in range(3):
                 assert np_out[i][k] == pytest.approx(row[k], abs=1e-15)
@@ -247,7 +247,7 @@ class TestVectorisedAveragingParity:
         adj = {0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2]}
         np_out = _apply_disp_smoothing_np(
             arr, fitted, adj, ds_passes=5,
-            thresh=1.0, dmin=0.1, dmax=0.9)
+            ds_thresh_mult=1.0, ds_min=0.1, ds_max=0.9)
         for i in range(4):
             for k in range(3):
                 assert np_out[i][k] == pytest.approx(same[k], abs=1e-10)
