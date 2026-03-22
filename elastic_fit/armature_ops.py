@@ -49,7 +49,7 @@ def _align_armature(source, target):
 class EFIT_OT_armature_display(Operator):
     bl_idname      = "efit.armature_display"
     bl_label       = "Apply Display Settings"
-    bl_description = "Apply the display type and In Front settings to the selected armature"
+    bl_description = "Apply the chosen display style and In Front setting to the selected armature"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod

@@ -38,9 +38,9 @@ class EFIT_OT_mesh_split(Operator):
     bl_label   = "Split Mesh"
     bl_description = (
         "Split the active mesh into separate objects. "
-        "Loose Parts: one object per disconnected island. "
-        "By Material: one object per material slot. "
-        "By Vertex Group: one object for the group, one for the rest."
+        "Loose Parts: one object per disconnected piece. "
+        "By Material: one object per material. "
+        "By Vertex Group: one object for the group, one for everything else."
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -105,8 +105,8 @@ class EFIT_OT_mesh_join(Operator):
     bl_idname  = "efit.mesh_join"
     bl_label   = "Join Meshes"
     bl_description = (
-        "Join all selected mesh objects into the active object. "
-        "Optionally merge vertices within the distance threshold."
+        "Combine all selected mesh objects into the active one. "
+        "Optionally merges overlapping vertices within the set distance."
     )
     bl_options = {'REGISTER', 'UNDO'}
 

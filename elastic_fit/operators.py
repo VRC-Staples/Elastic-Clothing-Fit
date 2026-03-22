@@ -30,7 +30,7 @@ from .pipeline import (
 class EFIT_OT_fit(Operator):
     bl_idname = "efit.fit"
     bl_label = "Fit Clothing"
-    bl_description = "Fit the clothing to the body mesh with a smooth, elastic result"
+    bl_description = "Fit the clothing to the body with a smooth, elastic result"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -284,7 +284,7 @@ class EFIT_OT_preview_apply(Operator):
     """Accept the current preview and finalize the fit."""
     bl_idname      = "efit.preview_apply"
     bl_label       = "Apply Fit"
-    bl_description = "Accept the current fit and apply any post-processing options"
+    bl_description = "Accept the current fit and finalize it"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -343,7 +343,7 @@ class EFIT_OT_preview_cancel(Operator):
     """Cancel the preview and restore the clothing to its original shape."""
     bl_idname      = "efit.preview_cancel"
     bl_label       = "Cancel Fit"
-    bl_description = "Discard the previewed fit and restore original mesh"
+    bl_description = "Throw away the current fit and restore the original clothing shape"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -393,7 +393,7 @@ class EFIT_OT_remove(Operator):
     """Remove all fit data from the clothing."""
     bl_idname      = "efit.remove"
     bl_label       = "Remove Fit"
-    bl_description = "Remove all fit data from the clothing and restore it"
+    bl_description = "Remove all fit data and restore the clothing to its original shape"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -419,7 +419,7 @@ class EFIT_OT_clear_blockers(Operator):
     """Remove shape keys and unapplied modifiers from the clothing."""
     bl_idname      = "efit.clear_blockers"
     bl_label       = "Clear Blockers"
-    bl_description = "Remove shape keys and unapplied modifiers from the clothing so it can be fitted"
+    bl_description = "Remove shape keys and extra modifiers from the clothing so it can be fitted"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -466,7 +466,7 @@ class EFIT_OT_reset_defaults(Operator):
     """Reset all Elastic Fit sliders to their default values."""
     bl_idname      = "efit.reset_defaults"
     bl_label       = "Reset Defaults"
-    bl_description = "Reset all sliders to their default values"
+    bl_description = "Reset all settings back to their defaults"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -503,7 +503,7 @@ class EFIT_OT_offset_group_add(Operator):
     """Add a new vertex group offset entry."""
     bl_idname      = "efit.offset_group_add"
     bl_label       = "Add Offset Group"
-    bl_description = "Add a vertex group whose offset influence can be fine-tuned"
+    bl_description = "Add a vertex group to adjust its offset separately"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -522,7 +522,7 @@ class EFIT_OT_offset_group_remove(Operator):
     """Remove the offset group entry at the given list index."""
     bl_idname      = "efit.offset_group_remove"
     bl_label       = "Remove Offset Group"
-    bl_description = "Remove this vertex group offset entry"
+    bl_description = "Remove this offset group entry"
     bl_options     = {'REGISTER', 'UNDO'}
 
     index: IntProperty()
@@ -540,7 +540,7 @@ class EFIT_OT_proximity_group_add(Operator):
     """Add a new per-group proximity falloff entry."""
     bl_idname      = "efit.proximity_group_add"
     bl_label       = "Add Proximity Group"
-    bl_description = "Add a vertex group with its own proximity falloff settings"
+    bl_description = "Add a vertex group with its own proximity falloff"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -558,7 +558,7 @@ class EFIT_OT_proximity_group_remove(Operator):
     """Remove the proximity group entry at the given list index."""
     bl_idname      = "efit.proximity_group_remove"
     bl_label       = "Remove Proximity Group"
-    bl_description = "Remove this per-group proximity falloff entry"
+    bl_description = "Remove this proximity falloff entry"
     bl_options     = {'REGISTER', 'UNDO'}
 
     index: IntProperty()
@@ -577,7 +577,7 @@ class EFIT_OT_exclusive_group_add(Operator):
     """Add a vertex group to the Exclusive Vertex Group Fit list."""
     bl_idname      = "efit.exclusive_group_add"
     bl_label       = "Add Exclusive Group"
-    bl_description = "Add a vertex group to fit exclusively"
+    bl_description = "Add a vertex group to the exclusive fit list"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -594,7 +594,7 @@ class EFIT_OT_exclusive_group_remove(Operator):
     """Remove a vertex group entry from the Exclusive Vertex Group Fit list."""
     bl_idname      = "efit.exclusive_group_remove"
     bl_label       = "Remove Exclusive Group"
-    bl_description = "Remove this vertex group from the exclusive fit list"
+    bl_description = "Remove this group from the exclusive fit list"
     bl_options     = {'REGISTER', 'UNDO'}
 
     index: IntProperty()
@@ -618,7 +618,7 @@ class EFIT_OT_check_update(Operator):
     """Check GitHub for a newer release of Elastic Clothing Fit."""
     bl_idname      = "efit.check_update"
     bl_label       = "Check for Updates"
-    bl_description = "Query the GitHub releases API to see if a newer version is available"
+    bl_description = "Check online for a newer version of the addon"
     bl_options     = {'REGISTER'}
 
     @classmethod
@@ -635,7 +635,7 @@ class EFIT_OT_download_update(Operator):
     """Download the latest release zip in the background."""
     bl_idname      = "efit.download_update"
     bl_label       = "Download Update"
-    bl_description = "Download the latest release zip file in the background"
+    bl_description = "Download the update in the background"
     bl_options     = {'REGISTER'}
 
     @classmethod
@@ -651,7 +651,7 @@ class EFIT_OT_install_restart(Operator):
     """Write the install startup script and relaunch Blender."""
     bl_idname      = "efit.install_restart"
     bl_label       = "Restart and Install"
-    bl_description = "Save if requested, write an auto-install script, and relaunch Blender"
+    bl_description = "Save your work (if selected), install the update, and restart Blender"
     bl_options     = {'REGISTER'}
 
     @classmethod

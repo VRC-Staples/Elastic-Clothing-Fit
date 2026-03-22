@@ -65,8 +65,11 @@ def _on_show_merge_armatures(self, context):
 
 def _preserve_group_search(self, context, edit_text):
     # self is an EFitProperties instance.
+    # Reversed so the list appears bottom-to-top relative to Blender's
+    # internal vertex-group order.  StringProperty stores the name, so
+    # display order has no effect on the stored value or on index drift.
     if self.clothing_obj and self.clothing_obj.type == 'MESH':
-        return [vg.name for vg in self.clothing_obj.vertex_groups
+        return [vg.name for vg in reversed(self.clothing_obj.vertex_groups)
                 if edit_text.lower() in vg.name.lower()]
     return []
 
@@ -74,11 +77,12 @@ def _preserve_group_search(self, context, edit_text):
 def _group_name_search(self, context, edit_text):
     # self is an EFitOffsetGroup / EFitExclusiveGroup / EFitProximityGroup instance.
     # Reach the clothing object through the scene; guard against missing context.
+    # Reversed to match _preserve_group_search display order.
     if context is None:
         return []
     p = context.scene.efit_props
     if p.clothing_obj and p.clothing_obj.type == 'MESH':
-        return [vg.name for vg in p.clothing_obj.vertex_groups
+        return [vg.name for vg in reversed(p.clothing_obj.vertex_groups)
                 if edit_text.lower() in vg.name.lower()]
     return []
 
@@ -92,24 +96,24 @@ class EFitProximityGroup(PropertyGroup):
     """One vertex group / falloff settings pair for per-group proximity fine-tuning."""
     group_name: StringProperty(
         name="Vertex Group",
-        description="Vertex group whose proximity falloff will be individually tuned",
+        description="Vertex group with its own proximity falloff settings",
         default="",
         search=_group_name_search,
         update=_on_proximity_group_name_update,
     )
     proximity_mode: EnumProperty(
         name="Mode",
-        description="When to measure cloth-to-body distances for this group's falloff",
+        description="When to measure how far the clothing is from the body for this group",
         items=[
-            ('PRE_FIT',         "Pre-Fit",         "Measure distances from original clothing positions"),
-            ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Measure distances after the shrinkwrap proxy is applied"),
+            ('PRE_FIT',         "Pre-Fit",         "Use the original clothing position before any fitting"),
+            ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Use the clothing position after the initial wrap to the body"),
         ],
         default='PRE_FIT',
         update=_on_proximity_group_update,
     )
     proximity_start: FloatProperty(
         name="Start Distance",
-        description="Vertices in this group closer than this receive full fit pull (weight 1.0)",
+        description="Parts of this group closer than this to the body are fully fitted",
         default=0.0,
         min=0.0,
         max=1.0,
@@ -120,7 +124,7 @@ class EFitProximityGroup(PropertyGroup):
     )
     proximity_end: FloatProperty(
         name="End Distance",
-        description="Vertices in this group farther than this receive no fit pull (weight 0.0)",
+        description="Parts of this group farther than this from the body are not fitted at all",
         default=0.05,
         min=0.001,
         max=1.0,
@@ -131,12 +135,12 @@ class EFitProximityGroup(PropertyGroup):
     )
     proximity_curve: EnumProperty(
         name="Curve",
-        description="Shape of the falloff curve for this group",
+        description="How the fit strength fades out between Start and End for this group",
         items=[
-            ('LINEAR', "Linear", "Straight linear falloff"),
-            ('SMOOTH', "Smooth", "Smooth S-curve falloff (recommended)"),
-            ('SHARP',  "Sharp",  "Quick drop-off close to the body"),
-            ('ROOT',   "Root",   "Gradual drop-off, stays full longer"),
+            ('LINEAR', "Linear", "Straight even fade"),
+            ('SMOOTH', "Smooth", "Gentle S-curve fade (recommended)"),
+            ('SHARP',  "Sharp",  "Drops off quickly near the body"),
+            ('ROOT',   "Root",   "Stays strong longer, fades late"),
         ],
         default='SMOOTH',
         update=_on_proximity_group_update,
@@ -147,13 +151,13 @@ class EFitExclusiveGroup(PropertyGroup):
     """A single vertex group entry for Exclusive Vertex Group Fit mode."""
     group_name: StringProperty(
         name="Vertex Group",
-        description="Vertex group to fit exclusively to the body",
+        description="Vertex group to fit to the body",
         default="",
         search=_group_name_search,
     )
     influence: IntProperty(
         name="Influence",
-        description="How much this group pushes away from the body. 100 is neutral, 0 pulls flush, 200 doubles the gap.",
+        description="Controls the gap from the body for this group. 100 is normal, lower pulls closer, higher pushes farther out",
         default=100,
         min=0,
         max=1000,
@@ -166,14 +170,14 @@ class EFitOffsetGroup(PropertyGroup):
     """One vertex group / influence pair for per-group offset fine-tuning."""
     group_name: StringProperty(
         name="Vertex Group",
-        description="Vertex group whose offset influence will be adjusted",
+        description="Vertex group to adjust the offset for",
         default="",
         search=_group_name_search,
         update=_on_offset_group_name_update,
     )
     influence: IntProperty(
         name="Influence",
-        description="How much this group pushes away from the body. 100 is neutral, 0 pulls flush, 200 doubles the gap.",
+        description="Controls the gap from the body for this group. 100 is normal, lower pulls closer, higher pushes farther out",
         default=100,
         min=0,
         max=1000,
@@ -188,7 +192,7 @@ class EFitProperties(PropertyGroup):
 
     ui_tab: EnumProperty(
         name="Tab",
-        description="Switch between fitting modes and the updater",
+        description="Switch between fitting, tools, and updates",
         items=[
             ('FULL',   "Fit",    "Fit clothing to the body"),
             ('TOOLS',  "Tools",  "Armature and mesh utilities"),
@@ -282,7 +286,7 @@ class EFitProperties(PropertyGroup):
     )
     merge_align_first: BoolProperty(
         name="Align Before Merge",
-        description="Scale and translate source armature to match target before merging",
+        description="Scale and reposition the source armature to match the target before merging",
         default=False,
     )
 
@@ -305,12 +309,12 @@ class EFitProperties(PropertyGroup):
     )
     mesh_join_merge: BoolProperty(
         name="Merge by Distance",
-        description="After joining, merge vertices within the distance threshold",
+        description="After joining, merge nearby vertices that overlap within the threshold",
         default=False,
     )
     mesh_join_threshold: FloatProperty(
         name="Merge Distance",
-        description="Vertices closer than this distance are merged after joining",
+        description="Vertices closer together than this are merged into one after joining",
         default=0.001,
         min=0.0,
         max=0.1,
@@ -322,34 +326,34 @@ class EFitProperties(PropertyGroup):
         name="Body",
         type=bpy.types.Object,
         poll=_mesh_poll,
-        description="Body mesh to fit clothing onto",
+        description="The avatar or body mesh to fit clothing onto",
     )
     clothing_obj: PointerProperty(
         name="Clothing",
         type=bpy.types.Object,
         poll=_mesh_poll,
-        description="Clothing mesh to be fitted",
+        description="The clothing mesh to be fitted",
     )
 
     fit_mode: EnumProperty(
         name="Fit Mode",
-        description="Which vertices to fit",
+        description="Choose whether to fit the whole clothing or only specific parts",
         items=[
             ('FULL',      "Full Mesh Fit",             "Fit the entire clothing mesh to the body"),
-            ('EXCLUSIVE', "Exclusive Vertex Group Fit", "Fit only the selected vertex groups, leaving the rest of the mesh untouched"),
+            ('EXCLUSIVE', "Exclusive Vertex Group Fit", "Fit only the chosen vertex groups and leave everything else untouched"),
         ],
         default='FULL',
     )
     use_exclusive_mode: BoolProperty(
         name="Exclusive Vertex Group Mode",
-        description="Fit only the listed vertex groups instead of the full mesh. Vertices outside the listed groups will not be moved.",
+        description="Fit only the listed vertex groups instead of the full mesh. Parts outside those groups stay in place",
         default=False,
         update=_on_exclusive_mode_toggle,
     )
     exclusive_groups: CollectionProperty(
         name="Exclusive Groups",
         type=EFitExclusiveGroup,
-        description="Vertex groups to fit in Exclusive Vertex Group Fit mode",
+        description="Vertex groups to fit when using Exclusive mode",
     )
 
     fit_amount: FloatProperty(
@@ -376,7 +380,7 @@ class EFitProperties(PropertyGroup):
 
     proxy_triangles: IntProperty(
         name="Proxy Resolution",
-        description="Detail level of the temporary mesh used during fitting. Higher gives cleaner results but takes longer.",
+        description="Detail level of the temporary mesh used during fitting. Higher is more accurate but slower",
         default=300000,
         min=10000,
         max=2000000,
@@ -385,24 +389,24 @@ class EFitProperties(PropertyGroup):
 
     preserve_uvs: BoolProperty(
         name="Preserve UVs",
-        description="Keep UVs unchanged after fitting. Recommended for most workflows.",
+        description="Keep UV maps unchanged after fitting. Leave this on unless you have a specific reason not to",
         default=True,
     )
 
     use_proxy_hull: BoolProperty(
         name="Hull Fit",
         description=(
-            "Build a convex-hull proxy of the body before fitting. "
-            "Fills concave regions like the crotch and inner thigh so clothing "
-            "conforms to the body center instead of being pulled toward individual legs. "
-            "Disable if it degrades results on your specific mesh."
+            "Wrap a simplified shell around the body before fitting. "
+            "Helps in areas like the crotch and inner thighs where clothing "
+            "might otherwise get pulled between the legs. "
+            "Turn off if it makes your specific garment look worse."
         ),
         default=False,
     )
 
     smooth_factor: FloatProperty(
         name="Elastic Strength",
-        description="How much the clothing tries to keep its original shape after being pulled onto the body.",
+        description="How much the clothing tries to keep its original shape after being fitted. Higher values preserve the silhouette more",
         default=0.75,
         min=0.0,
         max=2.0,
@@ -410,7 +414,7 @@ class EFitProperties(PropertyGroup):
     )
     smooth_iterations: IntProperty(
         name="Elastic Iterations",
-        description="How many times shape correction is applied. Higher values preserve more of the original silhouette.",
+        description="How many times shape correction runs. More iterations keep the original silhouette better",
         default=10,
         min=0,
         max=100,
@@ -419,13 +423,13 @@ class EFitProperties(PropertyGroup):
 
     post_laplacian: BoolProperty(
         name="Laplacian Smooth",
-        description="Apply an extra smoothing pass after fitting to clean up small surface irregularities",
+        description="Run an extra smoothing pass after fitting to clean up small bumps and wrinkles",
         default=False,
         update=_on_smooth_mod_update,
     )
     laplacian_factor: FloatProperty(
         name="Laplacian Factor",
-        description="How strong the extra smoothing pass is",
+        description="Strength of the extra smoothing pass",
         default=0.25,
         min=0.0,
         max=10.0,
@@ -433,7 +437,7 @@ class EFitProperties(PropertyGroup):
     )
     laplacian_iterations: IntProperty(
         name="Laplacian Iterations",
-        description="How many extra smoothing passes to apply",
+        description="Number of extra smoothing passes to run",
         default=1,
         min=1,
         max=50,
@@ -444,13 +448,13 @@ class EFitProperties(PropertyGroup):
 
     preserve_group: StringProperty(
         name="Preserve Group",
-        description="Vertex group that will not be fitted to the body. These vertices will gently follow nearby fitted areas instead.",
+        description="Vertex group to keep unfitted. These areas will gently follow the movement of nearby fitted parts instead",
         default="",
         search=_preserve_group_search,
     )
     follow_strength: FloatProperty(
         name="Follow Strength",
-        description="How much the preserved vertices follow the movement of surrounding fitted areas",
+        description="How closely preserved areas follow the movement of nearby fitted parts",
         default=1.0,
         min=0.0,
         max=1.0,
@@ -472,7 +476,7 @@ class EFitProperties(PropertyGroup):
 
     disp_smooth_passes: IntProperty(
         name="Smooth Passes",
-        description="Passes to smooth out sharp pinches in tight areas (e.g. between legs). Higher = smoother.",
+        description="Number of passes to smooth out pinching in tight areas like between the legs. More passes = smoother",
         default=15,
         min=0,
         max=50,
@@ -480,7 +484,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_threshold: FloatProperty(
         name="Gradient Threshold",
-        description="Sensitivity for crease detection. Lower values smooth out even gentle pinches; higher values only fix obvious sharp creases.",
+        description="How sensitive crease detection is. Lower catches gentle pinches, higher only fixes obvious sharp creases",
         default=2.0,
         min=0.5,
         max=10.0,
@@ -489,7 +493,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_min: FloatProperty(
         name="Min Smooth Blend",
-        description="Smoothing strength in flat areas. Keep low to preserve clothing surface detail.",
+        description="Smoothing in flat areas. Keep this low to preserve surface detail on the clothing",
         default=0.05,
         min=0.0,
         max=1.0,
@@ -498,7 +502,7 @@ class EFitProperties(PropertyGroup):
     )
     disp_smooth_max: FloatProperty(
         name="Max Smooth Blend",
-        description="Smoothing strength at sharp crease areas. Higher softens them more.",
+        description="Smoothing at sharp creases. Higher values soften them more",
         default=0.80,
         min=0.0,
         max=1.0,
@@ -507,7 +511,7 @@ class EFitProperties(PropertyGroup):
     )
     follow_neighbors: IntProperty(
         name="Follow Neighbors",
-        description="How wide an area the preserved vertices look at when deciding how to move. Higher values produce a smoother follow at the boundary.",
+        description="How wide an area preserved parts look at when following. Higher values give a smoother blend at the boundary",
         default=8,
         min=1,
         max=64,
@@ -518,22 +522,22 @@ class EFitProperties(PropertyGroup):
 
     use_proximity_falloff: BoolProperty(
         name="Proximity Falloff",
-        description="Reduce fit pull for vertices farther from the body, preserving volume in loose areas like puffy sleeves or skirts",
+        description="Reduce fit strength for parts farther from the body, keeping volume in loose areas like puffy sleeves or skirts",
         default=False,
         update=_on_preview_prop_update,
     )
     proximity_mode: EnumProperty(
         name="Mode",
-        description="When to measure cloth-to-body distances for the falloff",
+        description="When to measure how far the clothing is from the body",
         items=[
-            ('PRE_FIT',         "Pre-Fit",         "Measure distances from original clothing positions"),
-            ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Measure distances after the shrinkwrap proxy is applied"),
+            ('PRE_FIT',         "Pre-Fit",         "Use the original clothing position before any fitting"),
+            ('POST_SHRINKWRAP', "Post Shrinkwrap",  "Use the clothing position after the initial wrap to the body"),
         ],
         default='PRE_FIT',
     )
     proximity_start: FloatProperty(
         name="Start Distance",
-        description="Clothing vertices closer than this to the body receive full fit pull (weight 1.0)",
+        description="Clothing closer than this to the body is fully fitted",
         default=0.0,
         min=0.0,
         max=1.0,
@@ -544,7 +548,7 @@ class EFitProperties(PropertyGroup):
     )
     proximity_end: FloatProperty(
         name="End Distance",
-        description="Clothing vertices farther than this from the body receive no fit pull (weight 0.0)",
+        description="Clothing farther than this from the body is not fitted at all",
         default=0.05,
         min=0.001,
         max=1.0,
@@ -555,12 +559,12 @@ class EFitProperties(PropertyGroup):
     )
     proximity_curve: EnumProperty(
         name="Curve",
-        description="Shape of the falloff curve between Start and End distances",
+        description="How the fit strength fades out between Start and End distances",
         items=[
-            ('LINEAR', "Linear", "Straight linear falloff"),
-            ('SMOOTH', "Smooth", "Smooth S-curve falloff (recommended)"),
-            ('SHARP',  "Sharp",  "Quick drop-off close to the body"),
-            ('ROOT',   "Root",   "Gradual drop-off, stays full longer"),
+            ('LINEAR', "Linear", "Straight even fade"),
+            ('SMOOTH', "Smooth", "Gentle S-curve fade (recommended)"),
+            ('SHARP',  "Sharp",  "Drops off quickly near the body"),
+            ('ROOT',   "Root",   "Stays strong longer, fades late"),
         ],
         default='SMOOTH',
         update=_on_preview_prop_update,
@@ -573,13 +577,13 @@ class EFitProperties(PropertyGroup):
     # Ungrouped vertices always get weight 1.0 (no falloff reduction).
     use_proximity_group_tuning: BoolProperty(
         name="Per-Group Fine Tuning",
-        description="Assign independent proximity falloff settings to individual vertex groups",
+        description="Give individual vertex groups their own proximity falloff settings",
         default=False,
     )
     proximity_groups: CollectionProperty(
         name="Proximity Groups",
         type=EFitProximityGroup,
-        description="Per-vertex-group proximity falloff settings",
+        description="Per-group proximity falloff overrides",
     )
 
     # -- Offset fine-tuning groups --
@@ -587,7 +591,7 @@ class EFitProperties(PropertyGroup):
     offset_groups: CollectionProperty(
         name="Offset Groups",
         type=EFitOffsetGroup,
-        description="Per-vertex-group offset influence overrides",
+        description="Per-group offset influence overrides",
     )
 
     # -- Update restart options (shown inline when a download is ready) --
