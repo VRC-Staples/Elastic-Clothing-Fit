@@ -243,10 +243,12 @@ class EFIT_OT_fit(Operator):
         _kd_follow   = state._efit_cache.get('kd_follow')
         _fitted_set  = state._efit_cache.get('fitted_set', set(fitted_indices))
 
-        # Pre-build smoothing topology: vi_to_pos, src_rows, dst_rows are pure
-        # functions of fitted_indices and cloth_adj — both static for the entire
-        # preview session.  Computed once here so _apply_disp_smoothing never
-        # rebuilds them on slider ticks.
+        # Pre-build smoothing topology: vi_to_pos, src_rows, dst_rows, and
+        # smooth_degree are pure functions of fitted_indices and cloth_adj —
+        # both static for the entire preview session.  Computed once here so
+        # _apply_disp_smoothing never rebuilds them on slider ticks.
+        # smooth_degree replaces the per-vertex Python loop that previously
+        # rebuilt a neighbour-position list on every vertex of every pass.
         _vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
         _sm_src, _sm_dst = [], []
         for _i, _vi in enumerate(fitted_indices):
@@ -255,6 +257,16 @@ class EFIT_OT_fit(Operator):
                 if _ni_pos is not None and _ni_pos > _i:
                     _sm_src.append(_i)
                     _sm_dst.append(_ni_pos)
+        _sm_src_arr = np.array(_sm_src, dtype=np.int32)
+        _sm_dst_arr = np.array(_sm_dst, dtype=np.int32)
+        # Degree array: count of fitted neighbours per vertex (for avg divisor).
+        _degree = np.zeros(len(fitted_indices), dtype=np.float64)
+        if len(_sm_src_arr):
+            np.add.at(_degree, _sm_src_arr, 1.0)
+            np.add.at(_degree, _sm_dst_arr, 1.0)
+        # Replace 0-degree entries with 1.0 so isolated vertices divide safely.
+        _smooth_degree   = np.where(_degree > 0.0, _degree, 1.0)
+        _smooth_has_nbrs = _degree > 0.0
 
         state._efit_cache = {
             'cloth_name':           cloth.name,
@@ -274,9 +286,13 @@ class EFIT_OT_fit(Operator):
             'offset_group_weights': offset_group_weights,
             'vg_membership':        vg_membership,
             # Smoothing topology cache — static for the session lifetime.
+            # smooth_degree and smooth_has_nbrs enable fully-vectorised neighbour
+            # averaging, replacing the per-vertex Python loop in _apply_disp_smoothing.
             'smooth_vi_to_pos':     _vi_to_pos,
-            'smooth_src_rows':      np.array(_sm_src, dtype=np.int32),
-            'smooth_dst_rows':      np.array(_sm_dst, dtype=np.int32),
+            'smooth_src_rows':      _sm_src_arr,
+            'smooth_dst_rows':      _sm_dst_arr,
+            'smooth_degree':        _smooth_degree,
+            'smooth_has_nbrs':      _smooth_has_nbrs,
         }
         if _kd_preserve is not None:
             state._efit_cache['kd_preserve'] = _kd_preserve

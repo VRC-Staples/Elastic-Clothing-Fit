@@ -274,7 +274,8 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
 
 def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
                           ds_passes, ds_thresh_mult, ds_min, ds_max,
-                          vi_to_pos=None, src_rows=None, dst_rows=None):
+                          vi_to_pos=None, src_rows=None, dst_rows=None,
+                          smooth_degree=None, smooth_has_nbrs=None):
     """Apply adaptive multi-pass displacement smoothing on a numpy (N,3) array.
 
     ``smoothed_arr`` is an ``np.ndarray`` of shape ``(N, 3)`` float64 where
@@ -287,10 +288,18 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
     (ds_min).  Fixes creases in concave areas while leaving smooth regions
     untouched.
 
-    ``vi_to_pos``, ``src_rows``, and ``dst_rows`` are topology-derived structures
-    that are pure functions of ``fitted_indices`` and ``cloth_adj``.  They are
-    static for the entire preview session and should be pre-built once and passed
-    in from the cache.  When None (pipeline one-shot path), they are built here.
+    ``vi_to_pos``, ``src_rows``, ``dst_rows``, ``smooth_degree``, and
+    ``smooth_has_nbrs`` are topology-derived structures that are pure functions
+    of ``fitted_indices`` and ``cloth_adj``.  They are static for the entire
+    preview session and should be pre-built once and passed in from the cache.
+    When None (pipeline one-shot path), they are built here.
+
+    ``smooth_degree``   -- float64 array (N,) with the number of fitted
+                           neighbours per vertex; 0-degree entries replaced by
+                           1.0 so isolated vertices divide safely.
+    ``smooth_has_nbrs`` -- bool array (N,) True where degree > 0.  Isolated
+                           vertices are left unchanged regardless of blend,
+                           matching the old ``continue`` path.
 
     Returns an ``np.ndarray (N, 3)`` float64 with smoothed displacements.
     """
@@ -302,10 +311,10 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
     if vi_to_pos is None:
         vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
     if src_rows is None or dst_rows is None:
-        # Pre-build COO edge index arrays for vectorised gradient computation.
-        # Each undirected edge (i, ni_pos) where ni_pos > i is stored once.
-        # np.maximum.at on both src_rows and dst_rows ensures both endpoints
-        # get their gradient updated without needing the edge twice.
+        # Pre-build COO edge index arrays for vectorised gradient computation
+        # and neighbour averaging.  Each undirected edge (i, ni_pos) where
+        # ni_pos > i is stored once; np.maximum.at / np.add.at on both
+        # endpoints handles the symmetric update without duplicating edges.
         _src, _dst = [], []
         for i, vi in enumerate(fitted_indices):
             for ni in cloth_adj[vi]:
@@ -316,6 +325,19 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
         src_rows = np.array(_src, dtype=np.int32)
         dst_rows = np.array(_dst, dtype=np.int32)
     has_edges = len(src_rows) > 0
+
+    # Pre-compute per-vertex degree (number of fitted neighbours) once.
+    # Used by the vectorised averaging step; isolated vertices (degree 0)
+    # receive a safe denominator of 1 so their displacement is unchanged.
+    if smooth_degree is None or smooth_has_nbrs is None:
+        _degree = np.zeros(N, dtype=np.float64)
+        if has_edges:
+            np.add.at(_degree, src_rows, 1.0)
+            np.add.at(_degree, dst_rows, 1.0)
+        if smooth_degree is None:
+            smooth_degree = np.where(_degree > 0.0, _degree, 1.0)
+        if smooth_has_nbrs is None:
+            smooth_has_nbrs = _degree > 0.0
 
     # Double-buffer ping-pong: pre-allocate two (N,3) buffers once.
     # Each pass reads from buf_a and writes to buf_b; pointers swap at end of
@@ -344,19 +366,23 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
                          ds_min,
                          ds_min + (ds_max - ds_min) * t)
 
-        # --- Neighbor averaging (inner loop; irregular adjacency prevents
-        #     full vectorisation but uses direct array indexing not Vectors) ---
-        # Write results into buf_b; buf_a is the read-only source this pass.
-        np.copyto(buf_b, buf_a)
-        for i, vi in enumerate(fitted_indices):
-            neighbors = cloth_adj[vi]
-            if not neighbors:
-                continue
-            neighbor_positions = [vi_to_pos[ni] for ni in neighbors if ni in vi_to_pos]
-            if not neighbor_positions:
-                continue
-            avg = buf_a[neighbor_positions].mean(axis=0)
-            buf_b[i] = buf_a[i] * (1.0 - blend[i]) + avg * blend[i]
+        # --- Fully-vectorised neighbour averaging ---
+        # Scatter buf_a values from both edge endpoints into neighbor_sum so
+        # each vertex accumulates the sum of its fitted neighbours.
+        # np.add.at handles repeated vertex indices correctly (vertices with
+        # degree > 1 appear multiple times in src_rows/dst_rows).
+        # Divide by smooth_degree to get the per-vertex mean.
+        # Isolated vertices (smooth_has_nbrs=False) are left unchanged,
+        # matching the old per-vertex ``continue`` path exactly.
+        if has_edges:
+            neighbor_sum = np.zeros_like(buf_a)
+            np.add.at(neighbor_sum, src_rows, buf_a[dst_rows])
+            np.add.at(neighbor_sum, dst_rows, buf_a[src_rows])
+            avg = neighbor_sum / smooth_degree[:, None]
+            blended = buf_a * (1.0 - blend[:, None]) + avg * blend[:, None]
+            buf_b[:] = np.where(smooth_has_nbrs[:, None], blended, buf_a)
+        else:
+            buf_b[:] = buf_a
 
         # Swap: the written result becomes the source for the next pass.
         buf_a, buf_b = buf_b, buf_a
@@ -427,14 +453,17 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p,
         ).reshape(N, 3)
     # Pull pre-built topology from cache (None on pipeline one-shot path —
     # _apply_disp_smoothing will build them locally in that case).
-    vi_to_pos = _efit_cache.get('smooth_vi_to_pos')
-    src_rows  = _efit_cache.get('smooth_src_rows')
-    dst_rows  = _efit_cache.get('smooth_dst_rows')
+    vi_to_pos     = _efit_cache.get('smooth_vi_to_pos')
+    src_rows      = _efit_cache.get('smooth_src_rows')
+    dst_rows      = _efit_cache.get('smooth_dst_rows')
+    smooth_degree = _efit_cache.get('smooth_degree')
+    smooth_has_nbrs = _efit_cache.get('smooth_has_nbrs')
     result_arr = _apply_disp_smoothing(
         smoothed_arr, fitted_indices, cloth_adj,
         p.disp_smooth_passes, p.disp_smooth_threshold,
         p.disp_smooth_min, p.disp_smooth_max,
         vi_to_pos=vi_to_pos, src_rows=src_rows, dst_rows=dst_rows,
+        smooth_degree=smooth_degree, smooth_has_nbrs=smooth_has_nbrs,
     )
     if return_array:
         return result_arr
