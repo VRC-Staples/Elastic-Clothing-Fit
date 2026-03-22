@@ -127,41 +127,46 @@ def _efit_preview_update(context):
                         co_buf[base + 2] += n.z * delta
 
         # Accumulate preserve-follow writes into co_buf (P1).
-        if has_preserve and preserved_indices and fitted_indices:
+        # Guard uses needs_preserve so follow_strength=0 skips the loop entirely.
+        if needs_preserve and fitted_indices:
+            # Lazily build and cache the KDTree on first preview call.
+            # Rest-pose positions are used so neighbor selection stays stable
+            # as the mesh deforms across slider changes.
+            kd_follow = c.get('kd_follow')
+            if kd_follow is None:
+                kd_follow = KDTree(len(fitted_indices))
+                for i, vi in enumerate(fitted_indices):
+                    kd_follow.insert(all_originals[vi], i)
+                kd_follow.balance()
+                c['kd_follow'] = kd_follow
+
             strength = p.follow_strength
-            if strength > 0.0:
-                current_positions = pre_offset_positions
-
-                # Lazily build and cache the KDTree on first preview call.
-                # Rest-pose positions are used so neighbor selection stays stable
-                # as the mesh deforms across slider changes.
-                kd_follow = c.get('kd_follow')
-                if kd_follow is None:
-                    kd_follow = KDTree(len(fitted_indices))
-                    for i, vi in enumerate(fitted_indices):
-                        kd_follow.insert(all_originals[vi], i)
-                    kd_follow.balance()
-                    c['kd_follow'] = kd_follow
-
-                K_follow = min(p.follow_neighbors, len(fitted_indices))
-                for vi in preserved_indices:
-                    rest_pos  = mathutils.Vector(all_originals[vi])
-                    neighbors = kd_follow.find_n(rest_pos, K_follow)
-                    total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
-                    total_weight = 0.0
-                    for _co, idx, dist in neighbors:
-                        ni    = fitted_indices[idx]
-                        disp  = mathutils.Vector(current_positions[ni]) - mathutils.Vector(all_originals[ni])
-                        w     = 1.0 / max(dist, 0.0001)
-                        total_disp   += disp * w
-                        total_weight += w
-                    if total_weight > 0.0:
-                        avg_disp = total_disp / total_weight
-                        res  = rest_pos + avg_disp * strength
-                        base = vi * 3
-                        co_buf[base]     = res.x
-                        co_buf[base + 1] = res.y
-                        co_buf[base + 2] = res.z
+            K_follow = min(p.follow_neighbors, len(fitted_indices))
+            current_positions = pre_offset_positions
+            for vi in preserved_indices:
+                # Use the numpy row directly as the KDTree query position.
+                # mathutils.Vector is only constructed here (one per preserved
+                # vertex) because find_n requires it — not inside the inner loop.
+                rest = all_originals[vi]
+                neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
+                # Accumulate in raw floats — avoids allocating a mathutils.Vector
+                # per neighbor (was 2 + 3*K Vector allocs per preserved vertex).
+                tx = ty = tz = 0.0
+                total_weight = 0.0
+                for _co, idx, dist in neighbors:
+                    ni = fitted_indices[idx]
+                    cp = current_positions[ni]   # numpy (3,) row
+                    ao = all_originals[ni]        # numpy (3,) row
+                    w  = 1.0 / max(dist, 0.0001)
+                    tx += (cp[0] - ao[0]) * w
+                    ty += (cp[1] - ao[1]) * w
+                    tz += (cp[2] - ao[2]) * w
+                    total_weight += w
+                if total_weight > 0.0:
+                    base = vi * 3
+                    co_buf[base]     = rest[0] + (tx / total_weight) * strength
+                    co_buf[base + 1] = rest[1] + (ty / total_weight) * strength
+                    co_buf[base + 2] = rest[2] + (tz / total_weight) * strength
 
         cloth.data.vertices.foreach_set("co", co_buf)
         cloth.data.update()

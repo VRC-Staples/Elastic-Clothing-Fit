@@ -489,26 +489,31 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     cloth.data.vertices.foreach_get("co", co_buf)
 
     for vi in preserved_indices:
-        rest_pos  = mathutils.Vector(all_originals[vi])
-        neighbors = kd_follow.find_n(rest_pos, K_follow)
+        # mathutils.Vector only constructed here (one per preserved vertex)
+        # because find_n requires it — not inside the inner neighbor loop.
+        rest = all_originals[vi]
+        neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
 
-        total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
-        total_weight = 0.0
+        # Accumulate in raw floats — avoids allocating a mathutils.Vector
+        # per neighbor (was 2 + 3*K Vector allocs per preserved vertex).
+        tx = ty = tz = 0.0
+        total_weight  = 0.0
 
         for _co, idx, dist in neighbors:
-            ni    = fitted_indices[idx]
-            disp  = mathutils.Vector(pre_offset_positions[ni]) - mathutils.Vector(all_originals[ni])
-            w     = 1.0 / max(dist, 0.0001)
-            total_disp   += disp * w
+            ni = fitted_indices[idx]
+            cp = pre_offset_positions[ni]   # numpy (3,) row
+            ao = all_originals[ni]           # numpy (3,) row
+            w  = 1.0 / max(dist, 0.0001)
+            tx += (cp[0] - ao[0]) * w
+            ty += (cp[1] - ao[1]) * w
+            tz += (cp[2] - ao[2]) * w
             total_weight += w
 
         if total_weight > 0.0:
-            avg_disp = total_disp / total_weight
-            res  = rest_pos + avg_disp * strength
             base = vi * 3
-            co_buf[base]     = res.x
-            co_buf[base + 1] = res.y
-            co_buf[base + 2] = res.z
+            co_buf[base]     = rest[0] + (tx / total_weight) * strength
+            co_buf[base + 1] = rest[1] + (ty / total_weight) * strength
+            co_buf[base + 2] = rest[2] + (tz / total_weight) * strength
 
     cloth.data.vertices.foreach_set("co", co_buf)
     cloth.data.update()
