@@ -182,16 +182,6 @@ class EFitOffsetGroup(PropertyGroup):
     )
 
 
-class EFitArmatureEntry(PropertyGroup):
-    """A single armature entry for the display settings target list."""
-    armature: PointerProperty(
-        name="Armature",
-        type=bpy.types.Object,
-        poll=_armature_poll,
-        description="Armature to apply display settings to",
-    )
-
-
 class EFitProperties(PropertyGroup):
 
     # -- Tab and section collapse state --
@@ -254,15 +244,9 @@ class EFitProperties(PropertyGroup):
         default=False,
     )
 
-    armature_display_targets: CollectionProperty(
-        name="Armature Display Targets",
-        type=EFitArmatureEntry,
-        description="Armatures to apply display settings to",
-    )
-
     armature_display_type: EnumProperty(
         name="Display As",
-        description="How the selected armature(s) are drawn in the viewport",
+        description="How the selected armature is drawn in the viewport",
         items=[
             ('WIRE',       "Wire",       ""),
             ('SOLID',      "Solid",      ""),

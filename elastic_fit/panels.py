@@ -296,13 +296,6 @@ def _draw_misc(layout, p):
 
 
 def _draw_armature_display(layout, p):
-    for i, entry in enumerate(p.armature_display_targets):
-        row      = layout.row(align=True)
-        row.prop(entry, "armature", text="")
-        op       = row.operator("efit.armature_display_remove", text="", icon='REMOVE')
-        op.index = i
-    layout.operator("efit.armature_display_add", text="Add Armature", icon='ADD')
-    layout.separator()
     col = layout.column(align=True)
     col.prop(p, "armature_display_type")
     col.prop(p, "armature_show_in_front")

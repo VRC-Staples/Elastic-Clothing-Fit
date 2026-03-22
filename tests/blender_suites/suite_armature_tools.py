@@ -100,10 +100,8 @@ _assert_equal(p.show_armature_display, False, "show_armature_display default is 
 _assert_equal(p.show_merge_armatures,  False, "show_merge_armatures default is False")
 
 # Armature display properties
-_assert_true(hasattr(p, 'armature_display_targets'), "armature_display_targets property exists")
 _assert_true(hasattr(p, 'armature_display_type'),    "armature_display_type property exists")
 _assert_true(hasattr(p, 'armature_show_in_front'),   "armature_show_in_front property exists")
-_assert_equal(len(p.armature_display_targets), 0,      "armature_display_targets starts empty")
 _assert_equal(p.armature_display_type,         'STICK', "armature_display_type default is STICK")
 _assert_equal(p.armature_show_in_front,        False,   "armature_show_in_front default is False")
 
@@ -145,90 +143,65 @@ print("\n=== STEP 2 COMPLETE ===")
 
 
 # ============================================================
-# STEP 3: Armature display operator sets display_type and show_in_front
+# STEP 3: Armature display operator applies to active armature
 # ============================================================
-print("\n=== STEP 3: armature_display_targets collection and efit.armature_display ===")
+print("\n=== STEP 3: efit.armature_display applies to active armature ===")
 
-# Create two test armatures directly (no ops, no VIEW_3D context needed).
+# Create a test armature directly (no ops, no VIEW_3D context needed).
 data_a = bpy.data.armatures.new("ECF_Test_DispData_A")
-data_b = bpy.data.armatures.new("ECF_Test_DispData_B")
 arm_a  = bpy.data.objects.new("ECF_Test_DispArm_A", data_a)
-arm_b  = bpy.data.objects.new("ECF_Test_DispArm_B", data_b)
 bpy.context.scene.collection.objects.link(arm_a)
-bpy.context.scene.collection.objects.link(arm_b)
-
-# Add armatures to the display targets collection.
-entry_a          = p.armature_display_targets.add()
-entry_a.armature = arm_a
-entry_b          = p.armature_display_targets.add()
-entry_b.armature = arm_b
-
-_assert_equal(len(p.armature_display_targets), 2, "two entries in armature_display_targets")
-_assert_equal(p.armature_display_targets[0].armature, arm_a, "entry 0 points to arm_a")
-_assert_equal(p.armature_display_targets[1].armature, arm_b, "entry 1 points to arm_b")
 
 # Set target display properties.
 p.armature_display_type  = 'WIRE'
 p.armature_show_in_front = True
 
+# Select and activate the armature.
+for o in bpy.context.view_layer.objects:
+    o.select_set(False)
+arm_a.select_set(True)
+bpy.context.view_layer.objects.active = arm_a
+
 result = bpy.ops.efit.armature_display()
 
 _assert_equal(result, {'FINISHED'}, "efit.armature_display returned FINISHED")
 _assert_equal(arm_a.data.display_type, 'WIRE', "arm_a display_type set to WIRE")
-_assert_equal(arm_b.data.display_type, 'WIRE', "arm_b display_type set to WIRE")
 _assert_equal(arm_a.show_in_front, True, "arm_a show_in_front set to True")
-_assert_equal(arm_b.show_in_front, True, "arm_b show_in_front set to True")
 
-# Test efit.armature_display_add auto-assigns when one armature available.
-p.armature_display_targets.clear()
+# A second armature should not be affected.
+data_b = bpy.data.armatures.new("ECF_Test_DispData_B")
+arm_b  = bpy.data.objects.new("ECF_Test_DispArm_B", data_b)
+bpy.context.scene.collection.objects.link(arm_b)
 
-data_c = bpy.data.armatures.new("ECF_Test_DispData_C")
-arm_c  = bpy.data.objects.new("ECF_Test_DispArm_C", data_c)
-bpy.context.scene.collection.objects.link(arm_c)
+p.armature_display_type  = 'OCTAHEDRAL'
+p.armature_show_in_front = False
 
-# Put every scene armature except arm_c into the list so arm_c is the
-# sole candidate for auto-assign. This makes the test robust to
-# pre-existing armatures in the scene.
-for o in bpy.context.scene.objects:
-    if o.type == 'ARMATURE' and o is not arm_c:
-        e = p.armature_display_targets.add()
-        e.armature = o
+for o in bpy.context.view_layer.objects:
+    o.select_set(False)
+arm_b.select_set(True)
+bpy.context.view_layer.objects.active = arm_b
 
-pre_count = len(p.armature_display_targets)
-arm_b_idx = next(i for i, e in enumerate(p.armature_display_targets) if e.armature == arm_b)
+result2 = bpy.ops.efit.armature_display()
 
-# Now only arm_c is not in the list -- add operator should auto-assign it.
-result_add = bpy.ops.efit.armature_display_add()
-_assert_equal(result_add, {'FINISHED'}, "efit.armature_display_add returned FINISHED")
-_assert_equal(len(p.armature_display_targets), pre_count + 1, "one entry added after add")
-_assert_equal(p.armature_display_targets[pre_count].armature, arm_c, "arm_c auto-assigned as the one available armature")
+_assert_equal(result2, {'FINISHED'}, "efit.armature_display returned FINISHED for arm_b")
+_assert_equal(arm_b.data.display_type, 'OCTAHEDRAL', "arm_b display_type set to OCTAHEDRAL")
+_assert_equal(arm_b.show_in_front, False, "arm_b show_in_front set to False")
+# arm_a should still have its previous settings.
+_assert_equal(arm_a.data.display_type, 'WIRE', "arm_a display_type unchanged (still WIRE)")
+_assert_equal(arm_a.show_in_front, True, "arm_a show_in_front unchanged (still True)")
 
-# Test efit.armature_display_remove removes the correct entry.
-result_rm = bpy.ops.efit.armature_display_remove(index=arm_b_idx)
-_assert_equal(result_rm, {'FINISHED'}, "efit.armature_display_remove returned FINISHED")
-_assert_equal(len(p.armature_display_targets), pre_count, "list shrinks by one after remove")
-_assert_true(
-    all(e.armature != arm_b for e in p.armature_display_targets),
-    "arm_b no longer in list after remove"
-)
-_assert_equal(p.armature_display_targets[pre_count - 1].armature, arm_c, "arm_c still in list after remove")
-
-# Reset properties and collection.
-p.armature_display_targets.clear()
+# Reset properties.
 p.armature_display_type  = 'STICK'
 p.armature_show_in_front = False
 
 # Clean up.
 bpy.data.objects.remove(arm_a, do_unlink=True)
 bpy.data.objects.remove(arm_b, do_unlink=True)
-bpy.data.objects.remove(arm_c, do_unlink=True)
 bpy.data.armatures.remove(data_a)
 bpy.data.armatures.remove(data_b)
-bpy.data.armatures.remove(data_c)
 
 _assert_true("ECF_Test_DispArm_A" not in bpy.data.objects, "test armature A cleaned up")
 _assert_true("ECF_Test_DispArm_B" not in bpy.data.objects, "test armature B cleaned up")
-_assert_true("ECF_Test_DispArm_C" not in bpy.data.objects, "test armature C cleaned up")
 
 print("\n=== STEP 3 COMPLETE ===")
 

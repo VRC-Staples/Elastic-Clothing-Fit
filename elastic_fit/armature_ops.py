@@ -3,7 +3,6 @@
 # Provides display-mode batch setting and source-into-target armature merging.
 
 import bpy
-from bpy.props import IntProperty
 from bpy.types import Operator
 
 
@@ -50,65 +49,20 @@ def _align_armature(source, target):
 class EFIT_OT_armature_display(Operator):
     bl_idname      = "efit.armature_display"
     bl_label       = "Apply Display Settings"
-    bl_description = "Apply the display type and In Front settings to the listed armatures"
+    bl_description = "Apply the display type and In Front settings to the selected armature"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        p = context.scene.efit_props
-        return any(e.armature for e in p.armature_display_targets)
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
 
     def execute(self, context):
-        p     = context.scene.efit_props
-        count = 0
-        for entry in p.armature_display_targets:
-            if entry.armature and entry.armature.type == 'ARMATURE':
-                entry.armature.data.display_type = p.armature_display_type
-                entry.armature.show_in_front     = p.armature_show_in_front
-                count += 1
-        self.report({'INFO'}, f"Updated {count} armature(s)")
-        return {'FINISHED'}
-
-
-class EFIT_OT_armature_display_add(Operator):
-    bl_idname      = "efit.armature_display_add"
-    bl_label       = "Add Armature"
-    bl_description = "Add an armature to the list"
-    bl_options     = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return context.scene is not None
-
-    def execute(self, context):
-        p       = context.scene.efit_props
-        in_list = {e.armature for e in p.armature_display_targets if e.armature}
-        available = [
-            o for o in context.scene.objects
-            if o.type == 'ARMATURE' and o not in in_list
-        ]
-        entry = p.armature_display_targets.add()
-        if len(available) == 1:
-            entry.armature = available[0]
-        return {'FINISHED'}
-
-
-class EFIT_OT_armature_display_remove(Operator):
-    bl_idname      = "efit.armature_display_remove"
-    bl_label       = "Remove Armature"
-    bl_description = "Remove this armature from the list"
-    bl_options     = {'REGISTER', 'UNDO'}
-
-    index: IntProperty()
-
-    @classmethod
-    def poll(cls, context):
-        return context.scene is not None
-
-    def execute(self, context):
-        p = context.scene.efit_props
-        if 0 <= self.index < len(p.armature_display_targets):
-            p.armature_display_targets.remove(self.index)
+        p   = context.scene.efit_props
+        obj = context.active_object
+        obj.data.display_type = p.armature_display_type
+        obj.show_in_front     = p.armature_show_in_front
+        self.report({'INFO'}, f"Updated {obj.name}")
         return {'FINISHED'}
 
 

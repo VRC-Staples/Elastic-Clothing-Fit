@@ -34,7 +34,7 @@ bl_info = {
 import bpy
 from bpy.props import PointerProperty
 
-from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProximityGroup, EFitArmatureEntry, EFitProperties, EFitAddonPreferences
+from .properties import EFitExclusiveGroup, EFitOffsetGroup, EFitProximityGroup, EFitProperties, EFitAddonPreferences
 
 
 from .operators import (
@@ -56,8 +56,6 @@ from .operators import (
 )
 from .armature_ops import (
     EFIT_OT_armature_display,
-    EFIT_OT_armature_display_add,
-    EFIT_OT_armature_display_remove,
     EFIT_OT_merge_armatures,
 )
 from .mesh_ops import (
@@ -113,7 +111,6 @@ _classes = (
     EFitProximityGroup,
     EFitExclusiveGroup,
     EFitOffsetGroup,
-    EFitArmatureEntry,
     EFitProperties,
     EFIT_OT_fit,
     EFIT_OT_preview_apply,
@@ -131,8 +128,6 @@ _classes = (
     EFIT_OT_download_update,
     EFIT_OT_install_restart,
     EFIT_OT_armature_display,
-    EFIT_OT_armature_display_add,
-    EFIT_OT_armature_display_remove,
     EFIT_OT_merge_armatures,
     EFIT_OT_mesh_split,
     EFIT_OT_mesh_join,
