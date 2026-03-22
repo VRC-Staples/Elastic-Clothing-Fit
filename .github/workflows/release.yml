@@ -27,6 +27,14 @@ jobs:
           # Fetch full history so bl_info version reads correctly
           fetch-depth: 0
 
+      # tools/ and tests/ live on dev-UX-Tuning, not on main.
+      # Tags may point to main, so we restore these directories explicitly
+      # rather than relying on them being present in the checked-out tree.
+      - name: Restore dev tooling from dev-UX-Tuning
+        run: |
+          git fetch origin dev-UX-Tuning
+          git checkout origin/dev-UX-Tuning -- tools/ tests/
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
