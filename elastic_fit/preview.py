@@ -3,6 +3,8 @@
 # Also owns the property update callbacks and modifier sync helpers that are
 # referenced by EFitOffsetGroup and EFitProperties in properties.py.
 
+import time
+
 import numpy as np
 import mathutils
 from mathutils.kdtree import KDTree
@@ -30,6 +32,17 @@ def _efit_preview_update(context):
 
     state._efit_updating = True
     try:
+        # --- Profiling: resolve developer mode via deferred import ---
+        try:
+            from . import panels as _panels
+            _dev_mode = _panels._cached_developer_mode
+        except Exception:
+            _dev_mode = False
+
+        _t_adj = _t_smooth = _t_prox = _t_cobuf = _t_offgrp = _t_preserve = _t_fset = 0.0
+        if _dev_mode:
+            _t_total_start = time.perf_counter()
+
         p = context.scene.efit_props
         cloth = bpy.data.objects.get(c['cloth_name'])
         if cloth is None:
@@ -48,6 +61,8 @@ def _efit_preview_update(context):
         offset_delta       = p.offset - c.get('original_offset', p.offset)
         cloth_body_normals = c.get('cloth_body_normals', {})
 
+        if _dev_mode:
+            _t0 = time.perf_counter()
         adjusted_displacements = {}
         for vi in fitted_indices:
             if offset_delta != 0.0 and vi in cloth_body_normals:
@@ -56,18 +71,26 @@ def _efit_preview_update(context):
                 adjusted_displacements[vi] = d
             else:
                 adjusted_displacements[vi] = cloth_displacements[vi]
+        if _dev_mode:
+            _t_adj = time.perf_counter() - _t0
 
         # Re-run adaptive displacement smoothing with the current slider values.
         # return_array=True: get raw (N_fitted, 3) ndarray — avoids N Vector
         # allocations in _smooth_displacements and N more in the write loop below.
+        if _dev_mode:
+            _t0 = time.perf_counter()
         smoothed_arr = state._smooth_displacements(
             adjusted_displacements, fitted_indices, cloth_adj, p,
             return_array=True)
+        if _dev_mode:
+            _t_smooth = time.perf_counter() - _t0
 
         # --- Fix C: proximity weights ---
         # Proximity weights are a pure function of body distances (static) and
         # the proximity slider values.  Cache a shadow of those values and skip
         # recomputation when nothing proximity-related has changed.
+        if _dev_mode:
+            _t0 = time.perf_counter()
         proximity_weights = None
         if p.use_proximity_falloff:
             cloth_body_distances = c.get('cloth_body_distances', {})
@@ -92,12 +115,16 @@ def _efit_preview_update(context):
                             p.proximity_start, p.proximity_end, p.proximity_curve)
                     c['proximity_weights'] = proximity_weights
                     c['_prox_key'] = _prox_key
+        if _dev_mode:
+            _t_prox = time.perf_counter() - _t0
 
         # --- Fix A + Fix B: build co_buf without reading the mesh ---
         # all_originals is an np.ndarray (N_total, 3).  We write only fitted
         # (and later preserved) vertex positions — non-fitted verts are never
         # touched, so there is no need to read the whole mesh first.
         # smoothed_arr is already an (N_fitted, 3) ndarray; index it by position.
+        if _dev_mode:
+            _t0 = time.perf_counter()
         n_verts   = len(cloth.data.vertices)
         co_buf    = np.empty(n_verts * 3, dtype=np.float64)
         fi_arr    = np.array(fitted_indices, dtype=np.int32)
@@ -131,6 +158,8 @@ def _efit_preview_update(context):
             co_buf[nf_base]     = nf_pos[:, 0]
             co_buf[nf_base + 1] = nf_pos[:, 1]
             co_buf[nf_base + 2] = nf_pos[:, 2]
+        if _dev_mode:
+            _t_cobuf = time.perf_counter() - _t0
 
         # Snapshot pre-offset positions from fitted_pos (already in memory).
         offset_group_weights = c.get('offset_group_weights', {})
@@ -145,6 +174,8 @@ def _efit_preview_update(context):
             pre_offset_positions = {}
 
         # Accumulate offset group deltas directly into co_buf.
+        if _dev_mode:
+            _t0 = time.perf_counter()
         if has_offset_work:
             for og in source_groups:
                 og_name = _resolve_vg_name(og.group_name)
@@ -165,9 +196,13 @@ def _efit_preview_update(context):
                         co_buf[base]     += n.x * delta
                         co_buf[base + 1] += n.y * delta
                         co_buf[base + 2] += n.z * delta
+        if _dev_mode:
+            _t_offgrp = time.perf_counter() - _t0
 
         # Preserve-follow: move preserved vertices to follow nearby fitted areas.
         # Guard uses needs_preserve so follow_strength=0 skips entirely.
+        if _dev_mode:
+            _t0 = time.perf_counter()
         if needs_preserve and fitted_indices:
             # Lazily build and cache the KDTree on first preview call.
             kd_follow = c.get('kd_follow')
@@ -200,9 +235,30 @@ def _efit_preview_update(context):
                     co_buf[base]     = rest[0] + (tx / total_weight) * strength
                     co_buf[base + 1] = rest[1] + (ty / total_weight) * strength
                     co_buf[base + 2] = rest[2] + (tz / total_weight) * strength
+        if _dev_mode:
+            _t_preserve = time.perf_counter() - _t0
 
+        if _dev_mode:
+            _t0 = time.perf_counter()
         cloth.data.vertices.foreach_set("co", co_buf)
         cloth.data.update()
+        if _dev_mode:
+            _t_fset = time.perf_counter() - _t0
+
+        if _dev_mode:
+            _t_total = time.perf_counter() - _t_total_start
+            print(
+                f"[ECF] tick"
+                f"  adj={_t_adj*1000:.2f}ms"
+                f"  smooth={_t_smooth*1000:.2f}ms"
+                f"  prox={_t_prox*1000:.2f}ms"
+                f"  cobuf={_t_cobuf*1000:.2f}ms"
+                f"  offgrp={_t_offgrp*1000:.2f}ms"
+                f"  preserve={_t_preserve*1000:.2f}ms"
+                f"  fset={_t_fset*1000:.2f}ms"
+                f"  TOTAL={_t_total*1000:.2f}ms"
+            )
+
         if context.screen:
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
