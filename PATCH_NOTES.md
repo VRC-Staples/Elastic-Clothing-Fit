@@ -2,16 +2,17 @@
 
 ## v1.0.5
 
-### 4-tab panel layout
+### 3-tab panel layout
 
-The sidebar panel has been reorganized into four tabs:
+The sidebar panel has been reorganized into three tabs:
 
-- **Full** - Full Mesh Fit workflow (the default)
-- **Exclusive** - Exclusive Vertex Group Fit workflow
+- **Fit** - Fitting workflow (the default). Includes a toggle for Exclusive Vertex Group mode.
 - **Tools** - Mesh and armature utilities (new)
 - **Update** - Update checker (previously at the bottom of every tab)
 
-Tab switching is disabled while a preview is active. Switching between Full and Exclusive tabs automatically syncs the internal fit mode. Both tabs reset to Full after Apply or Cancel.
+Exclusive Vertex Group Fit is no longer a separate tab. It is now a toggle button inside the Fit tab that switches between Full Mesh Fit and Exclusive mode. The separate Exclusive tab has been removed.
+
+Tab switching is disabled while a preview is active. The fit mode resets to Full after Apply or Cancel.
 
 ### Tools tab
 
@@ -19,8 +20,20 @@ The new Tools tab provides mesh and armature utilities independent of the fittin
 
 - **Armature Display** — toggle display settings for selected armatures
 - **Merge Armatures** — combine two armatures into one, merging their bone hierarchies
-- **Mesh Split** — separate a mesh by vertex groups
-- **Mesh Join** — join multiple meshes into one
+- **Mesh Split** — separate a mesh by loose parts, material, or vertex group
+- **Mesh Join** — join multiple mesh objects into one, with optional merge-by-distance
+
+### Hull Fit
+
+A new **Hull Fit** toggle under Fit Settings. When enabled, the pipeline builds a convex-hull proxy of the body before fitting. The convex hull fills concave regions (crotch, inner thigh, armpits) so clothing conforms to the body center instead of being pulled toward individual limbs. Disabled by default — enable it for garments that dip into concave areas.
+
+### Symmetrize removed
+
+The Symmetrize post-fit option has been removed. It was rarely useful and added complexity to the finalize step. Symmetry can still be achieved using Blender's native Mesh > Symmetrize operator after applying the fit.
+
+### Nightly update channel
+
+A new **Use Nightly Channel** toggle appears in the Update tab when Developer Mode is enabled in add-on preferences. When active, the auto-updater checks for and installs nightly development builds instead of stable releases. Nightly builds include a date stamp and commit hash in the version display.
 
 ### Advanced Settings consolidated
 
