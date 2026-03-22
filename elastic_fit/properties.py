@@ -410,6 +410,7 @@ class EFitProperties(PropertyGroup):
         default=0.75,
         min=0.0,
         max=2.0,
+        step=1,
         update=_on_smooth_mod_update,
     )
     smooth_iterations: IntProperty(

@@ -247,9 +247,11 @@ def _draw_shape_preservation(layout, p, in_preview):
     _draw_proximity_falloff(layout, p, in_preview)
 
 
-def _draw_preserve_group(layout, p):
+def _draw_preserve_group(layout, p, in_preview):
     if p.clothing_obj and p.clothing_obj.type == 'MESH':
-        layout.prop(p, "preserve_group", text="Group")
+        row         = layout.row()
+        row.enabled = not in_preview
+        row.prop(p, "preserve_group", text="Group")
         if _resolve_vg_name(p.preserve_group):
             col = layout.column(align=True)
             col.prop(p, "follow_strength")
@@ -499,7 +501,7 @@ def _full_tab(layout, p, in_preview):
     _section(layout, p, 'show_fit_settings',      _draw_fit_settings,       p, in_preview)
     _section(layout, p, 'show_shape_preservation', _draw_shape_preservation, p, in_preview)
     if not is_exclusive:
-        _section(layout, p, 'show_preserve_group', _draw_preserve_group, p)
+        _section(layout, p, 'show_preserve_group', _draw_preserve_group, p, in_preview)
 
     layout.separator()
 
