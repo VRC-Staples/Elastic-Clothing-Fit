@@ -241,22 +241,21 @@ class TestPreOffsetPositionsNdarray:
         )
 
     def test_preserve_follow_uses_positional_indexing(self):
-        """_efit_apply_preserve_follow must access pre_offset_positions[idx], not [ni].
+        """_efit_apply_preserve_follow must use pre-computed fitted_disp, not per-vertex dict lookup.
 
-        When pre_offset_positions was a {vi: row} dict, the lookup used the vertex
-        index ni (= fitted_indices[idx]) as the dict key.  After migration to a
-        positional ndarray, the correct access is pre_offset_positions[idx] where
-        idx is the positional index from the KDTree insertion.
+        After the ndarray migration, pre_offset_positions is a positional (N_fitted, 3)
+        ndarray.  The optimization pre-computes fitted_disp = pre_offset_positions - all_originals[fi_arr]
+        once (vectorized), then indexes fitted_disp[idx] in the inner loop.  The old
+        per-vertex dict lookup pre_offset_positions[ni] must be gone.
         """
         src = _load("elastic_fit/pipeline.py")
         body = _get_func_source(src, "_efit_apply_preserve_follow")
         assert body, "_efit_apply_preserve_follow source not extractable"
-        assert "pre_offset_positions[idx]" in body, (
-            "_efit_apply_preserve_follow does not contain 'pre_offset_positions[idx]'.  "
-            "Positional ndarray indexing has not replaced the vertex-index dict lookup."
+        assert "fitted_disp" in body, (
+            "_efit_apply_preserve_follow does not contain 'fitted_disp'.  "
+            "The pre-computed displacement array pattern is missing."
         )
         assert "pre_offset_positions[ni]" not in body, (
             "_efit_apply_preserve_follow still contains 'pre_offset_positions[ni]'.  "
-            "The old vertex-index dict lookup has not been replaced by positional "
-            "indexing pre_offset_positions[idx]."
+            "The old vertex-index dict lookup has not been replaced."
         )

@@ -515,6 +515,11 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     co_buf  = np.empty(n_verts * 3, dtype=np.float64)
     cloth.data.vertices.foreach_get("co", co_buf)
 
+    # Pre-compute per-fitted-vertex displacement once (vectorized).
+    # fitted_disp[i] = pre_offset_positions[i] - all_originals[fitted_indices[i]]
+    fi_arr = np.array(fitted_indices, dtype=np.int32)
+    fitted_disp = pre_offset_positions - all_originals[fi_arr]
+
     for vi in preserved_indices:
         # mathutils.Vector only constructed here (one per preserved vertex)
         # because find_n requires it — not inside the inner neighbor loop.
@@ -527,20 +532,26 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
         total_weight  = 0.0
 
         for _co, idx, dist in neighbors:
-            ni = fitted_indices[idx]
-            cp = pre_offset_positions[idx]   # ndarray row by positional index
-            ao = all_originals[ni]           # numpy (3,) row
+            d = fitted_disp[idx]
             w  = 1.0 / max(dist, 0.0001)
-            tx += (cp[0] - ao[0]) * w
-            ty += (cp[1] - ao[1]) * w
-            tz += (cp[2] - ao[2]) * w
+            tx += d[0] * w
+            ty += d[1] * w
+            tz += d[2] * w
             total_weight += w
 
         if total_weight > 0.0:
-            base = vi * 3
-            co_buf[base]     = rest[0] + (tx / total_weight) * strength
-            co_buf[base + 1] = rest[1] + (ty / total_weight) * strength
-            co_buf[base + 2] = rest[2] + (tz / total_weight) * strength
+            # Early-exit: skip co_buf write for zero-displacement vertices.
+            # Avoids 3 indexed writes when the weighted displacement is
+            # negligibly small (vertex is far from all deformed areas).
+            inv_w = 1.0 / total_weight
+            dx = tx * inv_w
+            dy = ty * inv_w
+            dz = tz * inv_w
+            if abs(dx) + abs(dy) + abs(dz) >= 1e-7:
+                base = vi * 3
+                co_buf[base]     = rest[0] + dx * strength
+                co_buf[base + 1] = rest[1] + dy * strength
+                co_buf[base + 2] = rest[2] + dz * strength
 
     cloth.data.vertices.foreach_set("co", co_buf)
     cloth.data.update()

@@ -214,26 +214,37 @@ def _efit_preview_update(context):
             strength = p.follow_strength
             K_follow = min(p.follow_neighbors, len(fitted_indices))
             current_positions = pre_offset_positions  # ndarray (N_fitted, 3)
+
+            # Pre-compute per-fitted-vertex displacement once (vectorized).
+            # fitted_disp[i] = current_positions[i] - all_originals[fitted_indices[i]]
+            fi_arr = np.array(fitted_indices, dtype=np.int32)
+            fitted_disp = current_positions - all_originals[fi_arr]
+
             for vi in preserved_indices:
                 rest = all_originals[vi]
                 neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
                 tx = ty = tz = 0.0
                 total_weight = 0.0
                 for _co, idx, dist in neighbors:
-                    # idx is the positional index in fitted_indices; use directly.
-                    cp = current_positions[idx]  # numpy (3,) row
-                    ni = fitted_indices[idx]
-                    ao = all_originals[ni]        # numpy (3,) row
+                    d = fitted_disp[idx]
                     w  = 1.0 / max(dist, 0.0001)
-                    tx += (cp[0] - ao[0]) * w
-                    ty += (cp[1] - ao[1]) * w
-                    tz += (cp[2] - ao[2]) * w
+                    tx += d[0] * w
+                    ty += d[1] * w
+                    tz += d[2] * w
                     total_weight += w
                 if total_weight > 0.0:
-                    base = vi * 3
-                    co_buf[base]     = rest[0] + (tx / total_weight) * strength
-                    co_buf[base + 1] = rest[1] + (ty / total_weight) * strength
-                    co_buf[base + 2] = rest[2] + (tz / total_weight) * strength
+                    # Early-exit: skip co_buf write for zero-displacement vertices.
+                    # Avoids 3 indexed writes when the weighted displacement is
+                    # negligibly small (vertex is far from all deformed areas).
+                    inv_w = 1.0 / total_weight
+                    dx = tx * inv_w
+                    dy = ty * inv_w
+                    dz = tz * inv_w
+                    if abs(dx) + abs(dy) + abs(dz) >= 1e-7:
+                        base = vi * 3
+                        co_buf[base]     = rest[0] + dx * strength
+                        co_buf[base + 1] = rest[1] + dy * strength
+                        co_buf[base + 2] = rest[2] + dz * strength
         if _dev_mode:
             _t_preserve = time.perf_counter() - _t0
 
