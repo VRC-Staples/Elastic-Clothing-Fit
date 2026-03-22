@@ -241,6 +241,20 @@ class EFIT_OT_fit(Operator):
         _kd_fitted   = state._efit_cache.get('kd_fitted')
         _kd_follow   = state._efit_cache.get('kd_follow')
         _fitted_set  = state._efit_cache.get('fitted_set', set(fitted_indices))
+
+        # Pre-build smoothing topology: vi_to_pos, src_rows, dst_rows are pure
+        # functions of fitted_indices and cloth_adj — both static for the entire
+        # preview session.  Computed once here so _apply_disp_smoothing never
+        # rebuilds them on slider ticks.
+        _vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
+        _sm_src, _sm_dst = [], []
+        for _i, _vi in enumerate(fitted_indices):
+            for _ni in cloth_adj[_vi]:
+                _ni_pos = _vi_to_pos.get(_ni)
+                if _ni_pos is not None and _ni_pos > _i:
+                    _sm_src.append(_i)
+                    _sm_dst.append(_ni_pos)
+
         state._efit_cache = {
             'cloth_name':           cloth.name,
             'all_originals':        all_originals,
@@ -258,6 +272,10 @@ class EFIT_OT_fit(Operator):
             'original_offset':      p.offset,
             'offset_group_weights': offset_group_weights,
             'vg_membership':        vg_membership,
+            # Smoothing topology cache — static for the session lifetime.
+            'smooth_vi_to_pos':     _vi_to_pos,
+            'smooth_src_rows':      np.array(_sm_src, dtype=np.int32),
+            'smooth_dst_rows':      np.array(_sm_dst, dtype=np.int32),
         }
         if _kd_preserve is not None:
             state._efit_cache['kd_preserve'] = _kd_preserve

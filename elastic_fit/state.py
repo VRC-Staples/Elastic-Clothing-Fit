@@ -273,7 +273,8 @@ def _compute_proximity_group_weights(cloth, proximity_groups, distances, fitted_
 
 
 def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
-                          ds_passes, ds_thresh_mult, ds_min, ds_max):
+                          ds_passes, ds_thresh_mult, ds_min, ds_max,
+                          vi_to_pos=None, src_rows=None, dst_rows=None):
     """Apply adaptive multi-pass displacement smoothing on a numpy (N,3) array.
 
     ``smoothed_arr`` is an ``np.ndarray`` of shape ``(N, 3)`` float64 where
@@ -286,26 +287,34 @@ def _apply_disp_smoothing(smoothed_arr, fitted_indices, cloth_adj,
     (ds_min).  Fixes creases in concave areas while leaving smooth regions
     untouched.
 
+    ``vi_to_pos``, ``src_rows``, and ``dst_rows`` are topology-derived structures
+    that are pure functions of ``fitted_indices`` and ``cloth_adj``.  They are
+    static for the entire preview session and should be pre-built once and passed
+    in from the cache.  When None (pipeline one-shot path), they are built here.
+
     Returns an ``np.ndarray (N, 3)`` float64 with smoothed displacements.
     """
-    # Positional index map: vertex index → row position in smoothed_arr.
-    # Critical: cloth_adj uses vertex indices; smoothed_arr uses row indices.
-    vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
     N = len(fitted_indices)
 
-    # Pre-build COO edge index arrays for vectorised gradient computation.
-    # Each undirected edge (i, ni_pos) where ni_pos > i is stored once.
-    # np.maximum.at on both src_rows and dst_rows ensures both endpoints
-    # get their gradient updated without needing the edge twice.
-    _src, _dst = [], []
-    for i, vi in enumerate(fitted_indices):
-        for ni in cloth_adj[vi]:
-            ni_pos = vi_to_pos.get(ni)
-            if ni_pos is not None and ni_pos > i:  # each undirected edge once
-                _src.append(i)
-                _dst.append(ni_pos)
-    src_rows = np.array(_src, dtype=np.int32)
-    dst_rows = np.array(_dst, dtype=np.int32)
+    # Positional index map and COO edge arrays: build only when not supplied.
+    # During preview these are pre-built at fit time and cached — zero rebuild
+    # cost per slider tick.  On the pipeline one-shot path they are built here.
+    if vi_to_pos is None:
+        vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
+    if src_rows is None or dst_rows is None:
+        # Pre-build COO edge index arrays for vectorised gradient computation.
+        # Each undirected edge (i, ni_pos) where ni_pos > i is stored once.
+        # np.maximum.at on both src_rows and dst_rows ensures both endpoints
+        # get their gradient updated without needing the edge twice.
+        _src, _dst = [], []
+        for i, vi in enumerate(fitted_indices):
+            for ni in cloth_adj[vi]:
+                ni_pos = vi_to_pos.get(ni)
+                if ni_pos is not None and ni_pos > i:  # each undirected edge once
+                    _src.append(i)
+                    _dst.append(ni_pos)
+        src_rows = np.array(_src, dtype=np.int32)
+        dst_rows = np.array(_dst, dtype=np.int32)
     has_edges = len(src_rows) > 0
 
     # Double-buffer ping-pong: pre-allocate two (N,3) buffers once.
@@ -387,6 +396,10 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
     the call to ``_apply_disp_smoothing``, and the conversion back to
     ``{vi: Vector}`` so all callers remain unchanged.
 
+    Passes pre-built topology arrays (vi_to_pos, src_rows, dst_rows) from the
+    session cache when available — these are static for the preview lifetime and
+    are computed once at fit time rather than rebuilt on every slider tick.
+
     Returns a new dict {vi: Vector} with smoothed displacements.
     """
     # Build (N, 3) float64 array — row i corresponds to fitted_indices[i].
@@ -394,10 +407,16 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
         [displacements[vi].to_tuple() for vi in fitted_indices],
         dtype=np.float64,
     )
+    # Pull pre-built topology from cache (None on pipeline one-shot path —
+    # _apply_disp_smoothing will build them locally in that case).
+    vi_to_pos = _efit_cache.get('smooth_vi_to_pos')
+    src_rows  = _efit_cache.get('smooth_src_rows')
+    dst_rows  = _efit_cache.get('smooth_dst_rows')
     result_arr = _apply_disp_smoothing(
         smoothed_arr, fitted_indices, cloth_adj,
         p.disp_smooth_passes, p.disp_smooth_threshold,
         p.disp_smooth_min, p.disp_smooth_max,
+        vi_to_pos=vi_to_pos, src_rows=src_rows, dst_rows=dst_rows,
     )
     # Convert back to {vi: Vector} — callers (pipeline.py, preview.py) unchanged.
     return {vi: mathutils.Vector(result_arr[i]) for i, vi in enumerate(fitted_indices)}
