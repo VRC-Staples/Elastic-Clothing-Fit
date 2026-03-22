@@ -1,29 +1,63 @@
 # Patch Notes
 
-## v1.0.6
+## v1.0.5
+
+### 4-tab panel layout
+
+The sidebar panel has been reorganized into four tabs:
+
+- **Full** - Full Mesh Fit workflow (the default)
+- **Exclusive** - Exclusive Vertex Group Fit workflow
+- **Tools** - Mesh and armature utilities (new)
+- **Update** - Update checker (previously at the bottom of every tab)
+
+Tab switching is disabled while a preview is active. Switching between Full and Exclusive tabs automatically syncs the internal fit mode. Both tabs reset to Full after Apply or Cancel.
 
 ### Tools tab
 
-A new **Tools** tab has been added to the sidebar panel, providing mesh and armature utilities:
+The new Tools tab provides mesh and armature utilities independent of the fitting workflow:
 
 - **Armature Display** — toggle display settings for selected armatures
 - **Merge Armatures** — combine two armatures into one, merging their bone hierarchies
 - **Mesh Split** — separate a mesh by vertex groups
 - **Mesh Join** — join multiple meshes into one
 
-The existing Full, Exclusive, and Update tabs are unchanged.
+### Advanced Settings consolidated
 
-### Per-group proximity falloff fine-tuning
+All settings are now under a single **Advanced Settings** collapse toggle. Previously, Fit Settings was pinned above a separate Advanced box. Now everything is one level deep under the toggle, making the panel easier to scan.
 
-The Proximity Falloff section now supports per-vertex-group overrides. Enable **Per-Group Fine Tuning** under Advanced Settings > Shape Preservation > Proximity Falloff to assign each vertex group its own independent Mode, Start, End, and Curve settings. When active, the global proximity controls are replaced by a list of per-group entries. Vertices not covered by any listed group continue to receive full proximity weight.
+Within Advanced Settings, Fit Settings, Shape Preservation, and Preserve Group are promoted to top-level collapsible sections. The section structure matches the workflow order: settings → shape → preserve → smoothing → offset → reset.
 
-This makes it possible to use tight falloff on panels close to the body while applying a looser falloff — or no falloff — on regions that sit further out.
+### Section consolidation
 
-### Panel layout improvements
-
-- **Promoted sections.** Fit Settings, Shape Preservation, and Preserve Group are now promoted to top-level collapsible sections in Advanced Settings. The section structure now matches the workflow order: settings → shape → preserve → smoothing → offset → reset.
-- **Reduced nesting.** Several nested boxes and sub-boxes were consolidated, removing a layer of visual indentation throughout the panel.
+- **Proximity Falloff controls** moved inline into the **Shape Preservation** section. Enabling the toggle expands the mode, start, end, and curve controls directly beneath it. The separate Proximity Falloff section has been removed.
+- **Post-Laplacian controls** moved inline into the **Displacement Smoothing** section. Enabling the toggle expands the factor and iteration sliders directly beneath it. These controls were previously in the Post-Fit section.
 - **"Misc" renamed to "Reset & Cleanup".** The section that holds Reset Defaults and Clear Blockers is now labelled clearly. Tooltip added to Reset Defaults.
+- Several nested boxes and sub-boxes have been consolidated throughout, reducing visual indentation.
+
+### Proximity Falloff
+
+A new system that scales the fit effect based on how close each clothing vertex is to the body surface. Vertices close to the body receive the full displacement; vertices already far away receive less (or none at all). Useful for loose garments where only parts of the mesh need to conform.
+
+- Enable with the **Use Proximity Falloff** toggle in the **Shape Preservation** section
+- **Mode** - `Pre-Fit` measures distances before fitting (based on how the clothing sits before the fit runs); `Post-Fit` uses the post-fit result
+- **Start** / **End** - distance range in meters over which the falloff ramps from full effect to none
+- **Curve** - shape of the falloff ramp: Linear, Smooth, Sharp, or Root
+- All four sliders update live during preview
+
+#### Per-Group Fine Tuning
+
+Enable **Per-Group Fine Tuning** to assign each vertex group its own independent proximity settings:
+
+- Add vertex groups to the proximity group list, each with its own Mode, Start, End, and Curve
+- Vertices not covered by any listed group continue to receive full proximity weight (weight 1.0)
+- Useful when different parts of a garment need different falloff behaviour — tight panels near the body can use a narrow band while loose fabric higher up uses a wide band or no falloff at all
+
+### UI polish
+
+- **Onboarding hint.** When neither body nor clothing mesh is selected, the mesh picker area shows a short hint: "Pick your avatar body, then the clothing item to fit." The hint disappears as soon as the user starts selecting.
+- **Duplicate mesh alert.** If the same mesh is selected for both body and clothing, a red alert box appears immediately in the mesh picker section. The Fit button stays greyed out until different objects are selected.
+- **Remove Fit conditional state.** The Remove Fit button is now greyed out when no fit data is stored for the current clothing mesh. Previously it was always enabled even when there was nothing to remove.
 
 ### Bug fixes
 
@@ -42,50 +76,6 @@ This makes it possible to use tight falloff on panels close to the body while ap
 
 ### Performance improvements
 
-- **KDTree and fitted-set reuse.** The preserve-follow KDTree and fitted vertex set are built once per fit and reused across all preview updates, eliminating redundant rebuilds on every slider drag.
-- **Numpy pipeline optimisations.** Per-edge norm computation, proximity weight accumulation, and the falloff curve dispatch are now vectorised numpy operations. The displacement smoothing loop uses a double-buffer ping-pong to eliminate per-pass array allocations.
-
----
-
-## v1.0.5
-
-### 3-tab panel layout
-
-The sidebar panel has been reorganized into three tabs:
-
-- **Full** - Full Mesh Fit workflow (the default)
-- **Exclusive** - Exclusive Vertex Group Fit workflow
-- **Update** - Update checker (previously at the bottom of every tab)
-
-Tab switching is disabled while a preview is active. Switching between Full and Exclusive tabs automatically syncs the internal fit mode. Both tabs reset to Full after Apply or Cancel.
-
-### Advanced Settings consolidated
-
-All settings are now under a single **Advanced Settings** collapse toggle. Previously, Fit Settings was pinned above a separate Advanced box. Now everything is one level deep under the toggle, making the panel easier to scan.
-
-### Section consolidation
-
-- **Proximity Falloff controls** moved inline into the **Shape Preservation** section. Enabling the toggle expands the mode, start, end, and curve controls directly beneath it. The separate Proximity Falloff section has been removed.
-- **Post-Laplacian controls** moved inline into the **Displacement Smoothing** section. Enabling the toggle expands the factor and iteration sliders directly beneath it. These controls were previously in the Post-Fit section.
-
-### Proximity Falloff
-
-A new system that scales the fit effect based on how close each clothing vertex is to the body surface. Vertices close to the body receive the full displacement; vertices already far away receive less (or none at all). Useful for loose garments where only parts of the mesh need to conform.
-
-- Enable with the **Use Proximity Falloff** toggle in the **Shape Preservation** section
-- **Mode** - `Pre-Fit` measures distances before fitting (based on how the clothing sits before the fit runs); `Post-Fit` uses the post-fit result
-- **Start** / **End** - distance range in meters over which the falloff ramps from full effect to none
-- **Curve** - shape of the falloff ramp: Linear, Smooth, Sharp, or Root
-- All four sliders update live during preview
-
-### UI polish
-
-- **Onboarding hint.** When neither body nor clothing mesh is selected, the mesh picker area shows a short hint: "Pick your avatar body, then the clothing item to fit." The hint disappears as soon as the user starts selecting.
-- **Duplicate mesh alert.** If the same mesh is selected for both body and clothing, a red alert box appears immediately in the mesh picker section. The Fit button stays greyed out until different objects are selected.
-- **Remove Fit conditional state.** The Remove Fit button is now greyed out when no fit data is stored for the current clothing mesh. Previously it was always enabled even when there was nothing to remove.
-
-### Performance improvements
-
 The fitting pipeline and live preview have been overhauled to eliminate unnecessary work on every slider drag.
 
 - **Bulk vertex I/O.** Vertex positions and UV coordinates are now read and written using Blender's `foreach_get` / `foreach_set` APIs, which perform the full buffer copy in a single C-level call. Previously each vertex was read or written through the Python-to-C bridge individually.
@@ -96,6 +86,8 @@ The fitting pipeline and live preview have been overhauled to eliminate unnecess
 - **Body vertex buffer.** The body mesh vertex list passed to `BVHTree.FromPolygons` no longer creates a full `.copy()` of every vertex position. The BVH reads the positions directly.
 - **Conditional position snapshot.** The per-fitted-vertex position snapshot taken before offset fine-tuning is now skipped entirely when there are no offset groups and no preserve group. This avoids a full mesh traversal on the common case.
 - **Panel blocker detection cached.** `_has_blockers` (which checks for shape keys and incompatible modifiers) is now cached between frames in `state.py`. Blender calls the panel's `draw()` method up to 60 times per second; without the cache this ran a full modifier iteration on every frame. The cache key is `(object_name, modifier_count, shape_key_count)` and clears automatically on any change.
+- **KDTree and fitted-set reuse.** The preserve-follow KDTree and fitted vertex set are built once per fit and reused across all preview updates, eliminating redundant rebuilds on every slider drag.
+- **Numpy pipeline optimisations.** Per-edge norm computation, proximity weight accumulation, and the falloff curve dispatch are now vectorised numpy operations. The displacement smoothing loop uses a double-buffer ping-pong to eliminate per-pass array allocations.
 
 ---
 
