@@ -53,14 +53,14 @@ Within Advanced Settings, Fit Settings, Shape Preservation, and Preserve Group a
 A new system that scales the fit effect based on how close each clothing vertex is to the body surface. Vertices close to the body receive the full displacement; vertices already far away receive less (or none at all). Useful for loose garments where only parts of the mesh need to conform.
 
 - Enable with the **Use Proximity Falloff** toggle in the **Shape Preservation** section
-- **Mode** - `Pre-Fit` measures distances before fitting (based on how the clothing sits before the fit runs); `Post-Fit` uses the post-fit result
+- **Mode** - `Pre-Fit` measures distances before fitting (based on how the clothing sits before the fit runs); `Post Shrinkwrap` uses the post-shrinkwrap result
 - **Start** / **End** - distance range in meters over which the falloff ramps from full effect to none
 - **Curve** - shape of the falloff ramp: Linear, Smooth, Sharp, or Root
 - All four sliders update live during preview
 
-#### Per-Group Fine Tuning
+#### Tune Per Group
 
-Enable **Per-Group Fine Tuning** to assign each vertex group its own independent proximity settings:
+Enable **Tune Per Group** to assign each vertex group its own independent proximity settings:
 
 - Add vertex groups to the proximity group list, each with its own Mode, Start, End, and Curve
 - Vertices not covered by any listed group continue to receive full proximity weight (weight 1.0)
@@ -92,7 +92,7 @@ Enable **Per-Group Fine Tuning** to assign each vertex group its own independent
 The fitting pipeline and live preview have been overhauled to eliminate unnecessary work on every slider drag.
 
 - **Bulk vertex I/O.** Vertex positions and UV coordinates are now read and written using Blender's `foreach_get` / `foreach_set` APIs, which perform the full buffer copy in a single C-level call. Previously each vertex was read or written through the Python-to-C bridge individually.
-- **Median calculation.** The adaptive smoothing passes compute the median gradient using Python's `statistics.median()` (O(n) quickselect) instead of sorting the full array each pass (O(n log n)). The improvement is most noticeable at high smooth pass counts on large meshes.
+- **Median calculation.** The adaptive smoothing passes compute the median gradient using `np.median()` (numpy's introselect, O(n)) instead of sorting the full array each pass (O(n log n)). The improvement is most noticeable at high smooth pass counts on large meshes.
 - **Neighbor average accumulation.** Inside each smoothing pass, the per-vertex neighbor average is now computed as three plain float additions instead of allocating a `mathutils.Vector` object per vertex. This eliminates several hundred thousand object allocations per fit at Final quality.
 - **Edge adjacency build.** The edge adjacency table is now built using a numpy bulk read + boolean mask, skipping the Python loop over all edges for the fitness check.
 - **Vertex group queries.** All vertex group weight lookups that previously used `vg.weight(vi)` with `try/except RuntimeError` (Blender's only API for checking group membership) have been replaced with iteration over `v.groups`. The previous pattern constructed a Python exception object for every vertex not in a group; the new pattern has no exception overhead.
@@ -100,6 +100,7 @@ The fitting pipeline and live preview have been overhauled to eliminate unnecess
 - **Conditional position snapshot.** The per-fitted-vertex position snapshot taken before offset fine-tuning is now skipped entirely when there are no offset groups and no preserve group. This avoids a full mesh traversal on the common case.
 - **Panel blocker detection cached.** `_has_blockers` (which checks for shape keys and incompatible modifiers) is now cached between frames in `state.py`. Blender calls the panel's `draw()` method up to 60 times per second; without the cache this ran a full modifier iteration on every frame. The cache key is `(object_name, modifier_count, shape_key_count)` and clears automatically on any change.
 - **KDTree and fitted-set reuse.** The preserve-follow KDTree and fitted vertex set are built once per fit and reused across all preview updates, eliminating redundant rebuilds on every slider drag.
+- **pykdtree acceleration.** The add-on bundles a pre-built pykdtree wheel (`elastic_fit/wheels/`). On first install, `elastic_fit/deps.py` installs the wheel into Blender's user scripts path if pykdtree is not already available. When pykdtree loads successfully, all KDTree operations use it via a `BatchKDTree` alias, reducing preserve-follow query time from ~60–130 ms to ~1–2 ms on typical meshes. A `PYKDTREE_AVAILABLE` flag in `deps.py` lets pipeline code fall back to `mathutils.KDTree` gracefully if installation failed.
 - **Numpy pipeline optimisations.** Per-edge norm computation, proximity weight accumulation, and the falloff curve dispatch are now vectorised numpy operations. The displacement smoothing loop uses a double-buffer ping-pong to eliminate per-pass array allocations.
 
 ---

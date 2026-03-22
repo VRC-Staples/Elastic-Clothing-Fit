@@ -12,7 +12,7 @@ Follow this checklist for every stable release before publishing to GitHub.
   - Re-verify minimum whenever a new bpy API is introduced (see [KNOWLEDGE.md](../.gsd/KNOWLEDGE.md))
   - Current minimum: **3.2.0** (required by `bpy.context.temp_override`)
 - [ ] `README.md` "Compatible with Blender X.Y+" badge and Requirements section match `bl_info["blender"]`
-- [ ] `CHANGELOG.md` (if maintained) has an entry for this version
+- [ ] `PATCH_NOTES.md` has a section for this version
 
 ## Build
 

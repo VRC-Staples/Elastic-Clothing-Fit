@@ -75,7 +75,7 @@ Tab switching is disabled while a preview is active.
    - **Elastic Strength / Iterations.** Shape correction visible live in the viewport
    - **Laplacian Smooth.** Toggle and tune extra smoothing visible live in the viewport
    - **Displacement Smoothing.** Controls for crease softening (under Advanced Settings)
-   - **Proximity Falloff.** Scale the fit by body distance (under Advanced Settings > Shape Preservation)
+   - **Proximity Falloff.** Scale the fit by body distance (under Shape Preservation, a top-level section)
    - **Offset Fine Tuning.** Per-vertex-group offset multipliers (under Advanced Settings)
 4. Click **Apply** to finalize (bakes smoothing) or **Cancel** to revert
 
@@ -119,21 +119,21 @@ Preserved vertices are not fitted directly. Instead, they follow the movement of
 
 Proximity Falloff scales the fit effect based on how far each clothing vertex is from the body surface. Vertices close to the body receive the full displacement. Vertices already far away receive less (or none at all). This is useful for loose garments where only the parts near the body need to conform.
 
-1. Expand **Advanced Settings** and open **Shape Preservation**
+1. Expand **Shape Preservation** (a top-level collapsible section)
 2. Enable **Use Proximity Falloff**
 3. Set **Start** and **End** distances (in meters). Vertices closer than Start get full effect. Vertices beyond End get no effect. Vertices in between are ramped through the selected curve.
 4. Choose a **Curve** shape: Linear, Smooth, Sharp, or Root
 5. Choose a **Mode**:
    - **Pre-Fit** - distances are measured before the fit runs (based on the original clothing position)
-   - **Post-Fit** - distances are measured after fitting (based on where vertices end up)
+   - **Post Shrinkwrap** - distances are measured after the shrinkwrap step (based on where vertices end up)
 
 All four controls update live during preview.
 
-#### Per-Group Fine Tuning
+#### Tune Per Group
 
-Enable **Per-Group Fine Tuning** to assign each vertex group its own independent proximity settings:
+Enable **Tune Per Group** to assign each vertex group its own independent proximity settings:
 
-1. Enable **Use Proximity Falloff**, then enable **Per-Group Fine Tuning**
+1. Enable **Use Proximity Falloff**, then enable **Tune Per Group**
 2. Click **Add Group** and select a vertex group from the clothing mesh
 3. Set the **Mode**, **Start**, **End**, and **Curve** for that group independently
 4. Add as many groups as needed — each group's falloff ramps independently
@@ -201,16 +201,16 @@ Influence sliders update live during preview. Changing which vertex group is sel
 | Follow Neighbors | 8 | How many fitted vertices preserved verts sample when following (max 64) |
 | Influence (per group) | 100% | Per-vertex-group offset multiplier (0-1000%) |
 
-### Proximity Falloff (under Advanced Settings > Shape Preservation)
+### Proximity Falloff (under Shape Preservation)
 
 | Control | Default | Description |
 |---------|---------|-------------|
 | Use Proximity Falloff | Off | Enable falloff scaling by body distance |
-| Mode | Pre-Fit | Whether distances are measured before or after the fit runs |
+| Mode | Post Shrinkwrap | Whether distances are measured before or after the shrinkwrap step |
 | Start | 0.0 m | Distance below which vertices receive full effect |
 | End | 0.05 m | Distance above which vertices receive no effect |
 | Curve | Smooth | Falloff curve shape: Linear, Smooth, Sharp, or Root |
-| Per-Group Fine Tuning | Off | Override Mode/Start/End/Curve independently per vertex group |
+| Tune Per Group | Off | Override Mode/Start/End/Curve independently per vertex group |
 
 ## Preview Mode Reference
 
@@ -226,7 +226,7 @@ When a fit is active, the panel enters **Preview Mode**. The following controls 
 | Displacement Smoothing (Advanced Settings) | Yes |
 | Follow Strength / Neighbors | Yes |
 | Offset Fine Tuning groups | Yes |
-| Proximity Falloff (toggle + sliders) | Yes |
+| Proximity Falloff (toggle + Start/End/Curve sliders) | Yes — Mode requires re-fit |
 | Proxy Resolution | No (re-fit required) |
 | Preserve UVs | No (re-fit required) |
 | Hull Fit | No (re-fit required) |

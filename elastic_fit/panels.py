@@ -1,6 +1,6 @@
 # panels.py
 # Blender panel definition for Elastic Clothing Fit.
-# Three-tab layout: Full Mesh Fit, Exclusive Fit, Update.
+# Three-tab layout: Fit, Tools, Update.
 # Each tab has pinned controls (always visible) and collapsible sections.
 
 import pathlib
