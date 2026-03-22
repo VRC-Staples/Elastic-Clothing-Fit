@@ -5,7 +5,7 @@ on:
     - cron: '0 2 * * *'   # 2am UTC every day
   push:
     branches:
-      - dev-UX-Tuning
+      - dev
   workflow_dispatch:       # manual trigger for testing
 
 jobs:
@@ -80,11 +80,11 @@ jobs:
           gh release delete nightly --yes 2>/dev/null || true
           git push origin :refs/tags/nightly 2>/dev/null || true
           RECENT_COMMITS=$(git log -5 --pretty=format:"- %s" HEAD)
-          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability.\n\nAuto-built from `dev-UX-Tuning` @ %s\n\nAuto-build Run Status: https://github.com/%s/actions/runs/%s\n\n### Recent changes\n%s\n\n[View all commits](https://github.com/${{ github.repository }}/commits/dev-UX-Tuning)\n\nBLENDER_MIN=3.2.0' \
+          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability.\n\nAuto-built from `dev` @ %s\n\nAuto-build Run Status: https://github.com/%s/actions/runs/%s\n\n### Recent changes\n%s\n\n[View all commits](https://github.com/${{ github.repository }}/commits/dev)\n\nBLENDER_MIN=3.2.0' \
             '${{ github.sha }}' '${{ github.repository }}' '${{ github.run_id }}' "$RECENT_COMMITS")
           gh release create nightly "$ZIP" \
             --title "Nightly Dev Build $(date -u '+%Y-%m-%d')" \
             --notes "$NOTES" \
             --prerelease \
-            --target dev-UX-Tuning
+            --target dev
 

@@ -21,10 +21,10 @@ Follow this checklist for every stable release before publishing to GitHub.
 
 ## GitHub Release
 
-- [ ] Tag the commit on **`dev-UX-Tuning`** (not `main`): `git tag vX.Y.Z && git push origin vX.Y.Z`
+- [ ] Tag the commit on **`dev`** (not `main`): `git tag vX.Y.Z && git push origin vX.Y.Z`
   - `tools/` and `tests/` must be present on the tagged commit for CI to run
-  - The workflow always fetches `tools/` and `tests/` from `dev-UX-Tuning` as a safety net,
-    but tagging `dev-UX-Tuning` directly is the authoritative approach
+  - The workflow always fetches `tools/` and `tests/` from `dev` as a safety net,
+    but tagging `dev` directly is the authoritative approach
 - [ ] The `Stable Release` workflow triggers automatically on the tag push
   - It runs the full test suite, computes SHA-256, and creates a draft release
   - SHA-256 and `BLENDER_MIN=X.Y.Z` are embedded automatically
