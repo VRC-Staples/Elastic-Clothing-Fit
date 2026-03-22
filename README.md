@@ -32,7 +32,7 @@ For developer documentation, see the [Wiki](../../wiki).
 - **Live preview.** Adjust sliders and see changes in real-time before committing. Mesh selectors lock during preview to prevent accidental changes.
 - **UV preservation.** Original UVs are saved and restored after fitting so your texture work stays intact.
 - **Preserve Group.** Exclude vertex groups from fitting (e.g. waistbands, collars) with smooth blending at the border.
-- **Proximity Falloff.** Scale the fit effect by how close each clothing vertex is to the body. Vertices far from the body receive less (or no) displacement. Useful for loose garments where only the parts near the body need to conform.
+- **Proximity Falloff.** Scale the fit effect by how close each clothing vertex is to the body. Vertices far from the body receive less (or no) displacement. Supports per-vertex-group overrides with independent Mode, Start, End, and Curve settings per group.
 - **Crease smoothing.** Automatically softens sharp pinches in tight areas (like between legs) while leaving smooth regions untouched.
 - **Live smooth preview.** Shape correction and extra smoothing are applied as live modifiers during preview so you see the final result before applying.
 - **Post-fit options.** Optional shape correction, symmetrize, and extra smoothing applied on finalize.
@@ -41,6 +41,7 @@ For developer documentation, see the [Wiki](../../wiki).
 - **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
 - **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.
+- **Mesh and armature tools.** Utilities for splitting meshes by vertex group, joining meshes, displaying armature settings, and merging armature hierarchies.
 
 ## Installation
 
@@ -55,10 +56,11 @@ The panel appears in **View3D > Sidebar (N) > .Staples. ECF**.
 
 ### Panel layout
 
-The panel has three tabs in the sidebar:
+The panel has four tabs in the sidebar:
 
 - **Full** - Full Mesh Fit workflow (default)
 - **Exclusive** - Exclusive Vertex Group Fit workflow
+- **Tools** - Mesh and armature utilities
 - **Update** - Update checker
 
 Tab switching is disabled while a preview is active.
@@ -127,6 +129,18 @@ Proximity Falloff scales the fit effect based on how far each clothing vertex is
 
 All four controls update live during preview.
 
+#### Per-Group Fine Tuning
+
+Enable **Per-Group Fine Tuning** to assign each vertex group its own independent proximity settings:
+
+1. Enable **Use Proximity Falloff**, then enable **Per-Group Fine Tuning**
+2. Click **Add Group** and select a vertex group from the clothing mesh
+3. Set the **Mode**, **Start**, **End**, and **Curve** for that group independently
+4. Add as many groups as needed — each group's falloff ramps independently
+5. Vertices not in any listed group continue to receive full proximity weight (weight 1.0)
+
+This is useful when different parts of a garment need different falloff behaviour — tight panels near the body can use a narrow band while loose fabric higher up uses a wide band or no falloff at all.
+
 ### Post-Fit Options
 
 These options can be set before fitting or adjusted during preview, and are finalized when you click **Apply**:
@@ -134,6 +148,15 @@ These options can be set before fitting or adjusted during preview, and are fina
 - **Shape Preservation.** Keeps the clothing closer to its original silhouette after fitting. Strength and iteration count can be adjusted live during preview.
 - **Laplacian Smooth.** An extra smoothing pass to clean up small surface irregularities. Can be toggled on/off and tuned live during preview.
 - **Symmetrize.** Mirrors one side to the other along a chosen axis. Must be configured before fitting. Not available during preview; applied on finalize only.
+
+### Tools Tab
+
+The **Tools** tab provides mesh and armature utilities independent of the fitting workflow:
+
+- **Armature Display** — select one or more armatures and toggle their display settings (e.g. show as wireframe, show names)
+- **Merge Armatures** — select a source and target armature to merge the source's bone hierarchy into the target
+- **Mesh Split** — separate a mesh object into multiple objects by vertex group
+- **Mesh Join** — join multiple mesh objects into a single object
 
 ### Offset Fine Tuning
 
@@ -187,6 +210,7 @@ Influence sliders update live during preview. Changing which vertex group is sel
 | Start | 0.01 m | Distance below which vertices receive full effect |
 | End | 0.05 m | Distance above which vertices receive no effect |
 | Curve | Smooth | Falloff curve shape: Linear, Smooth, Sharp, or Root |
+| Per-Group Fine Tuning | Off | Override Mode/Start/End/Curve independently per vertex group |
 
 ## Preview Mode Reference
 

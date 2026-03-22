@@ -1,5 +1,52 @@
 # Patch Notes
 
+## v1.0.6
+
+### Tools tab
+
+A new **Tools** tab has been added to the sidebar panel, providing mesh and armature utilities:
+
+- **Armature Display** — toggle display settings for selected armatures
+- **Merge Armatures** — combine two armatures into one, merging their bone hierarchies
+- **Mesh Split** — separate a mesh by vertex groups
+- **Mesh Join** — join multiple meshes into one
+
+The existing Full, Exclusive, and Update tabs are unchanged.
+
+### Per-group proximity falloff fine-tuning
+
+The Proximity Falloff section now supports per-vertex-group overrides. Enable **Per-Group Fine Tuning** under Advanced Settings > Shape Preservation > Proximity Falloff to assign each vertex group its own independent Mode, Start, End, and Curve settings. When active, the global proximity controls are replaced by a list of per-group entries. Vertices not covered by any listed group continue to receive full proximity weight.
+
+This makes it possible to use tight falloff on panels close to the body while applying a looser falloff — or no falloff — on regions that sit further out.
+
+### Panel layout improvements
+
+- **Promoted sections.** Fit Settings, Shape Preservation, and Preserve Group are now promoted to top-level collapsible sections in Advanced Settings. The section structure now matches the workflow order: settings → shape → preserve → smoothing → offset → reset.
+- **Reduced nesting.** Several nested boxes and sub-boxes were consolidated, removing a layer of visual indentation throughout the panel.
+- **"Misc" renamed to "Reset & Cleanup".** The section that holds Reset Defaults and Clear Blockers is now labelled clearly. Tooltip added to Reset Defaults.
+
+### Bug fixes
+
+- **Vertex group selection stability.** All group name pickers (Preserve Group, Offset Fine Tuning, Exclusive Groups, Proximity Groups) now store the group name as a string rather than an integer index. Previously, adding, removing, or reordering vertex groups on the clothing mesh could silently remap a saved selection to a different group. String storage eliminates this index-drift entirely.
+- **Inside-body vertices with Proximity Falloff.** Vertices that penetrate the body mesh now always receive full proximity weight regardless of falloff curve settings. Previously, BVHTree returned a positive distance for inside-body vertices, placing them inside the falloff band and assigning them a reduced or zero weight — leaving them at their original penetrating position instead of being pulled out by the shrinkwrap displacement.
+- **Objects not in the active View Layer.** Fit Clothing now validates that both the body and clothing are in the active View Layer before running. Previously, if either object belonged to an excluded collection, Blender raised a `RuntimeError` with no actionable message.
+- **Poll guards on Reset Defaults and group Add operators.** Reset Defaults, Add Offset Group, and Add Proximity Group are now greyed out while a preview is active to prevent mid-preview state mutation.
+
+### Auto-updater hardening
+
+- **Download size cap.** The JSON metadata fetch and zip download are now capped at fixed byte limits. Oversized responses are rejected rather than consumed unboundedly.
+- **Tag name validation.** Release tag names are validated against a strict pattern before any further processing. Malformed tags are rejected before URL construction.
+- **SHA-256 required.** A missing SHA-256 in the release notes is now a blocking error. Downloads without a verifiable checksum are refused.
+- **Proper response cleanup.** HTTP response objects are now explicitly closed via `contextlib.closing` even when an exception occurs mid-read.
+- **Thread-safe state writes.** Multi-key state updates are batched inside a single lock acquisition to prevent torn reads by the panel draw thread.
+
+### Performance improvements
+
+- **KDTree and fitted-set reuse.** The preserve-follow KDTree and fitted vertex set are built once per fit and reused across all preview updates, eliminating redundant rebuilds on every slider drag.
+- **Numpy pipeline optimisations.** Per-edge norm computation, proximity weight accumulation, and the falloff curve dispatch are now vectorised numpy operations. The displacement smoothing loop uses a double-buffer ping-pong to eliminate per-pass array allocations.
+
+---
+
 ## v1.0.5
 
 ### 3-tab panel layout
