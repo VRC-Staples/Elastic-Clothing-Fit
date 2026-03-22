@@ -34,7 +34,7 @@ def _efit_preview_update(context):
         cloth = bpy.data.objects.get(c['cloth_name'])
         if cloth is None:
             return
-        all_originals        = c['all_originals']
+        all_originals        = c['all_originals']   # np.ndarray (N_total, 3)
         cloth_displacements  = c['cloth_displacements']
         cloth_adj            = c['cloth_adj']
         fitted_indices       = c['fitted_indices']
@@ -45,7 +45,7 @@ def _efit_preview_update(context):
         # Adjust each displacement along the cached body-surface normal by the
         # difference between the current offset and the offset baked into the
         # cache, so the preview stays live without re-running shrinkwrap.
-        offset_delta      = p.offset - c.get('original_offset', p.offset)
+        offset_delta       = p.offset - c.get('original_offset', p.offset)
         cloth_body_normals = c.get('cloth_body_normals', {})
 
         adjusted_displacements = {}
@@ -58,53 +58,93 @@ def _efit_preview_update(context):
                 adjusted_displacements[vi] = cloth_displacements[vi]
 
         # Re-run adaptive displacement smoothing with the current slider values.
-        smoothed = state._smooth_displacements(
-            adjusted_displacements, fitted_indices, cloth_adj, p)
+        # return_array=True: get raw (N_fitted, 3) ndarray — avoids N Vector
+        # allocations in _smooth_displacements and N more in the write loop below.
+        smoothed_arr = state._smooth_displacements(
+            adjusted_displacements, fitted_indices, cloth_adj, p,
+            return_array=True)
 
-        # Recompute proximity weights from cached distances so slider changes update live.
+        # --- Fix C: proximity weights ---
+        # Proximity weights are a pure function of body distances (static) and
+        # the proximity slider values.  Cache a shadow of those values and skip
+        # recomputation when nothing proximity-related has changed.
         proximity_weights = None
         if p.use_proximity_falloff:
             cloth_body_distances = c.get('cloth_body_distances', {})
             if cloth_body_distances:
-                if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
-                    proximity_weights = state._compute_proximity_group_weights(
-                        cloth, p.proximity_groups, cloth_body_distances, fitted_indices,
-                        vg_membership=c.get('vg_membership'))
+                # Build a key from the current proximity slider values.
+                _use_pg = p.use_proximity_group_tuning and len(p.proximity_groups) > 0
+                _prox_key = (
+                    _use_pg,
+                    p.proximity_start, p.proximity_end, p.proximity_curve,
+                )
+                if c.get('_prox_key') == _prox_key and c.get('proximity_weights') is not None:
+                    # Inputs unchanged — reuse cached weights.
+                    proximity_weights = c['proximity_weights']
                 else:
-                    proximity_weights = state._compute_proximity_weights(
-                        cloth_body_distances, fitted_indices,
-                        p.proximity_start, p.proximity_end, p.proximity_curve)
-        c['proximity_weights'] = proximity_weights
+                    if _use_pg:
+                        proximity_weights = state._compute_proximity_group_weights(
+                            cloth, p.proximity_groups, cloth_body_distances, fitted_indices,
+                            vg_membership=c.get('vg_membership'))
+                    else:
+                        proximity_weights = state._compute_proximity_weights(
+                            cloth_body_distances, fitted_indices,
+                            p.proximity_start, p.proximity_end, p.proximity_curve)
+                    c['proximity_weights'] = proximity_weights
+                    c['_prox_key'] = _prox_key
 
-        # Build co_buf with smoothed positions; deferred foreach_set covers smoothing,
-        # offset tuning, and preserve-follow in a single write at the end.
-        n_verts = len(cloth.data.vertices)
-        co_buf  = np.empty(n_verts * 3, dtype=np.float64)
-        cloth.data.vertices.foreach_get("co", co_buf)
-        for vi in fitted_indices:
-            pw     = proximity_weights[vi] if proximity_weights else 1.0
-            result = mathutils.Vector(all_originals[vi]) + smoothed[vi] * fit * pw
-            base   = vi * 3
-            co_buf[base]     = result.x
-            co_buf[base + 1] = result.y
-            co_buf[base + 2] = result.z
+        # --- Fix A + Fix B: build co_buf without reading the mesh ---
+        # all_originals is an np.ndarray (N_total, 3).  We write only fitted
+        # (and later preserved) vertex positions — non-fitted verts are never
+        # touched, so there is no need to read the whole mesh first.
+        # smoothed_arr is already an (N_fitted, 3) ndarray; index it by position.
+        n_verts   = len(cloth.data.vertices)
+        co_buf    = np.empty(n_verts * 3, dtype=np.float64)
+        fi_arr    = np.array(fitted_indices, dtype=np.int32)
 
-        # Snapshot pre-offset positions from the buffer -- co_buf already holds the
-        # smoothed result so no additional mesh read is needed.
+        # Vectorised write: all_originals[fi_arr] is (N_fitted, 3); smoothed_arr
+        # rows align by position with fitted_indices.
+        if proximity_weights is not None:
+            pw_arr = np.fromiter(
+                (proximity_weights[vi] for vi in fitted_indices),
+                dtype=np.float64, count=len(fitted_indices))
+            fitted_pos = all_originals[fi_arr] + smoothed_arr * (fit * pw_arr[:, None])
+        else:
+            fitted_pos = all_originals[fi_arr] + smoothed_arr * fit
+
+        # Scatter fitted positions into co_buf using COO-style index assignment.
+        # fi_arr gives the vertex indices; multiply by 3 for the flat buffer offset.
+        base_arr = fi_arr * 3
+        co_buf[base_arr]     = fitted_pos[:, 0]
+        co_buf[base_arr + 1] = fitted_pos[:, 1]
+        co_buf[base_arr + 2] = fitted_pos[:, 2]
+
+        # Non-fitted vertices: read their current positions from all_originals so
+        # the foreach_set has valid data everywhere (they are never deformed here).
+        # Build a mask and fill in one vectorised pass.
+        fitted_mask = np.zeros(n_verts, dtype=bool)
+        fitted_mask[fi_arr] = True
+        non_fitted = np.where(~fitted_mask)[0].astype(np.int32)
+        if len(non_fitted):
+            nf_base = non_fitted * 3
+            nf_pos  = all_originals[non_fitted]
+            co_buf[nf_base]     = nf_pos[:, 0]
+            co_buf[nf_base + 1] = nf_pos[:, 1]
+            co_buf[nf_base + 2] = nf_pos[:, 2]
+
+        # Snapshot pre-offset positions from fitted_pos (already in memory).
         offset_group_weights = c.get('offset_group_weights', {})
         original_offset = c.get('original_offset', 0.0)
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
         has_offset_work = bool(offset_group_weights and original_offset != 0.0)
         needs_preserve  = has_preserve and preserved_indices and p.follow_strength > 0.0
         if has_offset_work or needs_preserve:
-            _co_3 = co_buf.reshape(-1, 3)
-            _fi_arr = np.array(fitted_indices, dtype=np.int32)
-            _pos_arr = _co_3[_fi_arr]
-            pre_offset_positions = {vi: _pos_arr[i] for i, vi in enumerate(fitted_indices)}
+            # fitted_pos rows align with fitted_indices by position.
+            pre_offset_positions = {vi: fitted_pos[i] for i, vi in enumerate(fitted_indices)}
         else:
             pre_offset_positions = {}
 
-        # Accumulate offset group deltas directly into co_buf (P3).
+        # Accumulate offset group deltas directly into co_buf.
         if has_offset_work:
             for og in source_groups:
                 og_name = _resolve_vg_name(og.group_name)
@@ -126,12 +166,10 @@ def _efit_preview_update(context):
                         co_buf[base + 1] += n.y * delta
                         co_buf[base + 2] += n.z * delta
 
-        # Accumulate preserve-follow writes into co_buf (P1).
-        # Guard uses needs_preserve so follow_strength=0 skips the loop entirely.
+        # Preserve-follow: move preserved vertices to follow nearby fitted areas.
+        # Guard uses needs_preserve so follow_strength=0 skips entirely.
         if needs_preserve and fitted_indices:
             # Lazily build and cache the KDTree on first preview call.
-            # Rest-pose positions are used so neighbor selection stays stable
-            # as the mesh deforms across slider changes.
             kd_follow = c.get('kd_follow')
             if kd_follow is None:
                 kd_follow = KDTree(len(fitted_indices))
@@ -144,13 +182,8 @@ def _efit_preview_update(context):
             K_follow = min(p.follow_neighbors, len(fitted_indices))
             current_positions = pre_offset_positions
             for vi in preserved_indices:
-                # Use the numpy row directly as the KDTree query position.
-                # mathutils.Vector is only constructed here (one per preserved
-                # vertex) because find_n requires it — not inside the inner loop.
                 rest = all_originals[vi]
                 neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
-                # Accumulate in raw floats — avoids allocating a mathutils.Vector
-                # per neighbor (was 2 + 3*K Vector allocs per preserved vertex).
                 tx = ty = tz = 0.0
                 total_weight = 0.0
                 for _co, idx, dist in neighbors:
@@ -300,6 +333,8 @@ def _on_proximity_group_prop_update(self, context):
     """Property update callback: refreshes the preview when any per-group proximity
     slider (mode, start, end, curve) changes."""
     if state._efit_cache:
+        # Bust the proximity weight cache so the next tick recomputes.
+        state._efit_cache.pop('_prox_key', None)
         _efit_preview_update(context)
 
 
@@ -308,4 +343,6 @@ def _on_proximity_group_name_update(self, context):
     vertex group selection changes.  Weight recomputation happens inside
     _efit_preview_update via the per-group path."""
     if state._efit_cache:
+        # Bust the proximity weight cache so the next tick recomputes.
+        state._efit_cache.pop('_prox_key', None)
         _efit_preview_update(context)

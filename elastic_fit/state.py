@@ -389,7 +389,8 @@ def call_handler(name, self, context):
         fn(self, context)
 
 
-def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
+def _smooth_displacements(displacements, fitted_indices, cloth_adj, p,
+                          return_array=False):
     """Build a smoothed copy of displacements using current property slider values.
 
     Wraps the numpy array construction (from the {vi: Vector} input dict),
@@ -400,13 +401,25 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
     session cache when available — these are static for the preview lifetime and
     are computed once at fit time rather than rebuilt on every slider tick.
 
-    Returns a new dict {vi: Vector} with smoothed displacements.
+    ``return_array=True``: return the raw ``np.ndarray (N, 3)`` float64 instead
+    of a ``{vi: Vector}`` dict.  The preview path uses this to avoid N
+    ``mathutils.Vector`` allocations per tick; the pipeline one-shot path uses
+    the default dict form.
+
+    Returns a new dict {vi: Vector} with smoothed displacements, or an
+    ``np.ndarray (N, 3)`` float64 when return_array=True.
     """
     # Build (N, 3) float64 array — row i corresponds to fitted_indices[i].
-    smoothed_arr = np.array(
-        [displacements[vi].to_tuple() for vi in fitted_indices],
+    # np.fromiter with count= pre-allocates the buffer and streams from the
+    # generator with no intermediate Python list (vs np.array([...]) which
+    # builds a list first).  Flattened then reshaped to avoid a tuple-of-tuples
+    # intermediate (each .to_tuple() returns a 3-float tuple).
+    N = len(fitted_indices)
+    smoothed_arr = np.fromiter(
+        (x for vi in fitted_indices for x in displacements[vi].to_tuple()),
         dtype=np.float64,
-    )
+        count=N * 3,
+    ).reshape(N, 3)
     # Pull pre-built topology from cache (None on pipeline one-shot path —
     # _apply_disp_smoothing will build them locally in that case).
     vi_to_pos = _efit_cache.get('smooth_vi_to_pos')
@@ -418,7 +431,9 @@ def _smooth_displacements(displacements, fitted_indices, cloth_adj, p):
         p.disp_smooth_min, p.disp_smooth_max,
         vi_to_pos=vi_to_pos, src_rows=src_rows, dst_rows=dst_rows,
     )
-    # Convert back to {vi: Vector} — callers (pipeline.py, preview.py) unchanged.
+    if return_array:
+        return result_arr
+    # Convert back to {vi: Vector} — pipeline.py caller unchanged.
     return {vi: mathutils.Vector(result_arr[i]) for i, vi in enumerate(fitted_indices)}
 
 
