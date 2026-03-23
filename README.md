@@ -4,6 +4,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/VRC-Staples/Elastic-Clothing-Fit?label=release)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/releases/latest)
 [![Blender](https://img.shields.io/badge/Blender-3.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3-blue)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/WyDmWdThXM)
 
 Fit any clothing mesh to any body in a few clicks, with fine-tuning options when you need them.
 
