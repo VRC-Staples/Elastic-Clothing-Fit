@@ -1,5 +1,110 @@
 # Patch Notes
 
+## v1.0.5
+
+### 3-tab panel layout
+
+The sidebar panel has been reorganized into three tabs:
+
+- **Fit** - Fitting workflow (the default). Includes a toggle for Exclusive Vertex Group mode.
+- **Tools** - Mesh and armature utilities (new)
+- **Update** - Update checker (previously at the bottom of every tab)
+
+Exclusive Vertex Group Fit is no longer a separate tab. It is now a toggle button inside the Fit tab that switches between Full Mesh Fit and Exclusive mode. The separate Exclusive tab has been removed.
+
+Tab switching is disabled while a preview is active. The fit mode resets to Full after Apply or Cancel.
+
+### Tools tab
+
+The new Tools tab provides mesh and armature utilities independent of the fitting workflow:
+
+- **Armature Display** — toggle display settings for selected armatures
+- **Merge Armatures** — combine two armatures into one, merging their bone hierarchies
+- **Mesh Split** — separate a mesh by loose parts, material, or vertex group
+- **Mesh Join** — join multiple mesh objects into one, with optional merge-by-distance
+
+### Hull Fit
+
+A new **Hull Fit** toggle under Fit Settings. When enabled, the pipeline builds a convex-hull proxy of the body before fitting. The convex hull fills concave regions (crotch, inner thigh, armpits) so clothing conforms to the body center instead of being pulled toward individual limbs. Disabled by default — enable it for garments that dip into concave areas.
+
+### Symmetrize removed
+
+The Symmetrize post-fit option has been removed. It was rarely useful and added complexity to the finalize step. Symmetry can still be achieved using Blender's native Mesh > Symmetrize operator after applying the fit.
+
+### Nightly update channel
+
+A new **Use Nightly Channel** toggle appears in the Update tab when Developer Mode is enabled in add-on preferences. When active, the auto-updater checks for and installs nightly development builds instead of stable releases. Nightly builds include a date stamp and commit hash in the version display.
+
+### Advanced Settings consolidated
+
+All settings are now under a single **Advanced Settings** collapse toggle. Previously, Fit Settings was pinned above a separate Advanced box. Now everything is one level deep under the toggle, making the panel easier to scan.
+
+Within Advanced Settings, Fit Settings, Shape Preservation, and Preserve Group are promoted to top-level collapsible sections. The section structure matches the workflow order: settings → shape → preserve → smoothing → offset → reset.
+
+### Section consolidation
+
+- **Proximity Falloff controls** moved inline into the **Shape Preservation** section. Enabling the toggle expands the mode, start, end, and curve controls directly beneath it. The separate Proximity Falloff section has been removed.
+- **Post-Laplacian controls** moved inline into the **Displacement Smoothing** section. Enabling the toggle expands the factor and iteration sliders directly beneath it. These controls were previously in the Post-Fit section.
+- **"Misc" renamed to "Reset & Cleanup".** The section that holds Reset Defaults and Clear Blockers is now labelled clearly. Tooltip added to Reset Defaults.
+- Several nested boxes and sub-boxes have been consolidated throughout, reducing visual indentation.
+
+### Proximity Falloff
+
+A new system that scales the fit effect based on how close each clothing vertex is to the body surface. Vertices close to the body receive the full displacement; vertices already far away receive less (or none at all). Useful for loose garments where only parts of the mesh need to conform.
+
+- Enable with the **Use Proximity Falloff** toggle in the **Shape Preservation** section
+- **Mode** - `Pre-Fit` measures distances before fitting (based on how the clothing sits before the fit runs); `Post Shrinkwrap` uses the post-shrinkwrap result
+- **Start** / **End** - distance range in meters over which the falloff ramps from full effect to none
+- **Curve** - shape of the falloff ramp: Linear, Smooth, Sharp, or Root
+- All four sliders update live during preview
+
+#### Tune Per Group
+
+Enable **Tune Per Group** to assign each vertex group its own independent proximity settings:
+
+- Add vertex groups to the proximity group list, each with its own Mode, Start, End, and Curve
+- Vertices not covered by any listed group continue to receive full proximity weight (weight 1.0)
+- Useful when different parts of a garment need different falloff behaviour — tight panels near the body can use a narrow band while loose fabric higher up uses a wide band or no falloff at all
+
+### UI polish
+
+- **Onboarding hint.** When neither body nor clothing mesh is selected, the mesh picker area shows a short hint: "Pick your avatar body, then the clothing item to fit." The hint disappears as soon as the user starts selecting.
+- **Duplicate mesh alert.** If the same mesh is selected for both body and clothing, a red alert box appears immediately in the mesh picker section. The Fit button stays greyed out until different objects are selected.
+- **Remove Fit conditional state.** The Remove Fit button is now greyed out when no fit data is stored for the current clothing mesh. Previously it was always enabled even when there was nothing to remove.
+
+### Bug fixes
+
+- **Vertex group selection stability.** All group name pickers (Preserve Group, Offset Fine Tuning, Exclusive Groups, Proximity Groups) now store the group name as a string rather than an integer index. Previously, adding, removing, or reordering vertex groups on the clothing mesh could silently remap a saved selection to a different group. String storage eliminates this index-drift entirely.
+- **Inside-body vertices with Proximity Falloff.** Vertices that penetrate the body mesh now always receive full proximity weight regardless of falloff curve settings. Previously, BVHTree returned a positive distance for inside-body vertices, placing them inside the falloff band and assigning them a reduced or zero weight — leaving them at their original penetrating position instead of being pulled out by the shrinkwrap displacement.
+- **Objects not in the active View Layer.** Fit Clothing now validates that both the body and clothing are in the active View Layer before running. Previously, if either object belonged to an excluded collection, Blender raised a `RuntimeError` with no actionable message.
+- **Poll guards on Reset Defaults and group Add operators.** Reset Defaults, Add Offset Group, and Add Proximity Group are now greyed out while a preview is active to prevent mid-preview state mutation.
+
+### Auto-updater hardening
+
+- **Download size cap.** The JSON metadata fetch and zip download are now capped at fixed byte limits. Oversized responses are rejected rather than consumed unboundedly.
+- **Tag name validation.** Release tag names are validated against a strict pattern before any further processing. Malformed tags are rejected before URL construction.
+- **SHA-256 required.** A missing SHA-256 in the release notes is now a blocking error. Downloads without a verifiable checksum are refused.
+- **Proper response cleanup.** HTTP response objects are now explicitly closed via `contextlib.closing` even when an exception occurs mid-read.
+- **Thread-safe state writes.** Multi-key state updates are batched inside a single lock acquisition to prevent torn reads by the panel draw thread.
+
+### Performance improvements
+
+The fitting pipeline and live preview have been overhauled to eliminate unnecessary work on every slider drag.
+
+- **Bulk vertex I/O.** Vertex positions and UV coordinates are now read and written using Blender's `foreach_get` / `foreach_set` APIs, which perform the full buffer copy in a single C-level call. Previously each vertex was read or written through the Python-to-C bridge individually.
+- **Median calculation.** The adaptive smoothing passes compute the median gradient using `np.median()` (numpy's introselect, O(n)) instead of sorting the full array each pass (O(n log n)). The improvement is most noticeable at high smooth pass counts on large meshes.
+- **Neighbor average accumulation.** Inside each smoothing pass, the per-vertex neighbor average is now computed as three plain float additions instead of allocating a `mathutils.Vector` object per vertex. This eliminates several hundred thousand object allocations per fit at Final quality.
+- **Edge adjacency build.** The edge adjacency table is now built using a numpy bulk read + boolean mask, skipping the Python loop over all edges for the fitness check.
+- **Vertex group queries.** All vertex group weight lookups that previously used `vg.weight(vi)` with `try/except RuntimeError` (Blender's only API for checking group membership) have been replaced with iteration over `v.groups`. The previous pattern constructed a Python exception object for every vertex not in a group; the new pattern has no exception overhead.
+- **Body vertex buffer.** The body mesh vertex list passed to `BVHTree.FromPolygons` no longer creates a full `.copy()` of every vertex position. The BVH reads the positions directly.
+- **Conditional position snapshot.** The per-fitted-vertex position snapshot taken before offset fine-tuning is now skipped entirely when there are no offset groups and no preserve group. This avoids a full mesh traversal on the common case.
+- **Panel blocker detection cached.** `_has_blockers` (which checks for shape keys and incompatible modifiers) is now cached between frames in `state.py`. Blender calls the panel's `draw()` method up to 60 times per second; without the cache this ran a full modifier iteration on every frame. The cache key is `(object_name, modifier_count, shape_key_count)` and clears automatically on any change.
+- **KDTree and fitted-set reuse.** The preserve-follow KDTree and fitted vertex set are built once per fit and reused across all preview updates, eliminating redundant rebuilds on every slider drag.
+- **pykdtree acceleration.** The add-on bundles a pre-built pykdtree wheel (`elastic_fit/wheels/`). On first install, `elastic_fit/deps.py` installs the wheel into Blender's user scripts path if pykdtree is not already available. When pykdtree loads successfully, all KDTree operations use it via a `BatchKDTree` alias, reducing preserve-follow query time from ~60–130 ms to ~1–2 ms on typical meshes. A `PYKDTREE_AVAILABLE` flag in `deps.py` lets pipeline code fall back to `mathutils.KDTree` gracefully if installation failed.
+- **Numpy pipeline optimisations.** Per-edge norm computation, proximity weight accumulation, and the falloff curve dispatch are now vectorised numpy operations. The displacement smoothing loop uses a double-buffer ping-pong to eliminate per-pass array allocations.
+
+---
+
 ## v1.0.4
 
 ### In-panel update checker

@@ -1,14 +1,64 @@
 # panels.py
 # Blender panel definition for Elastic Clothing Fit.
-# Draws the sidebar panel including mesh selection, blocker warnings,
-# action buttons, and the collapsible Advanced Settings section.
+# Three-tab layout: Fit, Tools, Update.
+# Each tab has pinned controls (always visible) and collapsible sections.
+
+import pathlib
 
 import bpy
 from bpy.types import Panel
 
+from . import _meta
 from . import state
 from . import updater
-from .state import _has_blockers, PANEL_CATEGORY
+from .state import _has_blockers_cached, PANEL_CATEGORY
+from .properties import _resolve_vg_name
+
+_nightly_path = pathlib.Path(__file__).parent / "_nightly.txt"
+
+# ---------------------------------------------------------------------------
+# Module-level caches — populated at load and refreshed by callbacks.
+# These replace per-draw disk I/O, circular imports, and repeated string
+# formatting that previously ran on every panel redraw.
+# ---------------------------------------------------------------------------
+
+# Blender version string computed once at module load.
+# panels.py is only ever imported inside Blender, so bpy.app.version is
+# available at this point.
+_BLENDER_VERSION_STR: str = "v" + ".".join(str(x) for x in bpy.app.version)
+
+# Cached content of _nightly.txt (None = file absent or unreadable).
+# Updated by _refresh_nightly_content(), called from __init__.register()
+# and from the download-completion callback in updater.py.
+_nightly_content: "str | None" = None
+
+# Cached developer_mode preference value.
+# Written by the BoolProperty update= callback in properties.py so the draw
+# function never has to traverse context.preferences.addons on every redraw.
+_cached_developer_mode: bool = False
+
+
+def _refresh_nightly_content() -> None:
+    """Re-read _nightly.txt and update the module-level cache.
+
+    Called once at addon registration (via __init__.register()) and again
+    whenever a download completes (via updater._download_thread).
+    Safe to call from any thread — the GIL makes the single-name rebind atomic.
+
+    Observability: After this function runs, ``panels._nightly_content`` holds
+    the current file contents (or None).  Inspect it in a Python REPL or
+    Blender's Python console to confirm the cache is populated:
+        from elastic_fit import panels; print(panels._nightly_content)
+    """
+    global _nightly_content
+    try:
+        _nightly_content = _nightly_path.read_text().strip() if _nightly_path.is_file() else None
+    except OSError:
+        _nightly_content = None
+
+
+# Populate on module load so the first draw has content available.
+_refresh_nightly_content()
 
 
 def _wrap_text(text, max_chars=40, max_lines=3):
@@ -29,6 +79,442 @@ def _wrap_text(text, max_chars=40, max_lines=3):
     return lines
 
 
+# ---------------------------------------------------------------------------
+# Shared drawing helpers
+# ---------------------------------------------------------------------------
+
+def _draw_mesh_pickers(layout, p, in_preview):
+    box         = layout.box()
+    box.enabled = not in_preview
+    both_set = p.body_obj and p.clothing_obj
+    icon = 'CHECKMARK' if both_set else 'MESH_DATA'
+    box.label(text="Select Meshes", icon=icon)
+    if not p.body_obj or not p.clothing_obj:
+        box.label(text="Pick your avatar body, then the clothing item to fit.", icon='INFO')
+    box.prop(p, "body_obj",     icon='OUTLINER_OB_MESH')
+    box.prop(p, "clothing_obj", icon='MATCLOTH')
+    if p.body_obj and p.clothing_obj and p.body_obj == p.clothing_obj:
+        col = box.column()
+        col.alert = True
+        col.label(text="Body and clothing must be different meshes.", icon='ERROR')
+
+
+def _draw_blocker_warnings(layout, p):
+    if not (p.clothing_obj and p.clothing_obj.type == 'MESH'):
+        return
+    has_sk, blocker_mods = _has_blockers_cached(p.clothing_obj)
+    if not (has_sk or blocker_mods):
+        return
+    warn_box       = layout.box()
+    warn_box.alert = True
+    warn_box.label(text="Blockers Detected", icon='ERROR')
+    if has_sk:
+        sk_count = len(p.clothing_obj.data.shape_keys.key_blocks)
+        warn_box.label(text=f"  {sk_count} shape key(s)", icon='SHAPEKEY_DATA')
+    if blocker_mods:
+        warn_box.label(
+            text=f"  {len(blocker_mods)} modifier(s): {', '.join(blocker_mods[:3])}"
+                 + ("..." if len(blocker_mods) > 3 else ""),
+            icon='MODIFIER',
+        )
+    warn_box.operator("efit.clear_blockers", icon='TRASH')
+
+
+def _draw_action_buttons(layout, p, in_preview):
+    layout.separator()
+    if in_preview:
+        box = layout.box()
+        box.label(text="Preview Active", icon='HIDE_OFF')
+        box.label(text="Adjust sliders to see changes live.")
+        row         = box.row(align=True)
+        row.scale_y = 1.5
+        row.operator("efit.preview_apply",  icon='CHECKMARK', text="Apply")
+        row.operator("efit.preview_cancel", icon='CANCEL',    text="Cancel")
+    else:
+        cloth    = p.clothing_obj
+        has_fit  = bool(
+            cloth and (
+                cloth.name in state._efit_originals
+                or "_efit_originals" in cloth
+            )
+        )
+        fit_row         = layout.row()
+        fit_row.scale_y = 1.5
+        fit_row.operator("efit.fit", icon='CHECKMARK')
+        rm_row         = layout.row()
+        rm_row.scale_y = 1.0
+        rm_row.enabled = has_fit
+        rm_row.operator("efit.remove", icon='X')
+
+
+def _collapsible(layout, p, prop_name):
+    """Draw a collapsible toggle row. Returns True if expanded."""
+    row = layout.row()
+    row.prop(
+        p, prop_name,
+        icon='TRIA_DOWN' if getattr(p, prop_name) else 'TRIA_RIGHT',
+        emboss=False,
+    )
+    return getattr(p, prop_name)
+
+
+def _section(layout, p, prop_name, draw_fn, *args):
+    """Box with a collapsible header; calls draw_fn(box, *args) when expanded."""
+    box      = layout.box()
+    expanded = _collapsible(box, p, prop_name)
+    if expanded:
+        draw_fn(box, *args)
+
+
+# ---------------------------------------------------------------------------
+# Section content helpers
+# ---------------------------------------------------------------------------
+
+def _draw_fit_settings(layout, p, in_preview):
+    col = layout.column(align=True)
+    col.prop(p, "fit_amount")
+    col.prop(p, "offset")
+    row         = col.row()
+    row.enabled = not in_preview
+    row.prop(p, "proxy_triangles")
+    row         = col.row()
+    row.enabled = not in_preview
+    row.prop(p, "preserve_uvs")
+    row         = col.row()
+    row.enabled = not in_preview
+    row.prop(p, "use_proxy_hull")
+
+
+def _draw_proximity_falloff(layout, p, in_preview):
+    """Draw the Proximity Falloff block with three states:
+      - use_proximity_falloff off: only the checkbox shown
+      - on, use_proximity_group_tuning off (or no groups): global controls + tuning checkbox
+      - on, use_proximity_group_tuning on, 1+ groups: per-group rows; global controls hidden
+    """
+    layout.prop(p, "use_proximity_falloff")
+    if not p.use_proximity_falloff:
+        return
+
+    sub = layout.row()
+    sub.separator(factor=1.0)
+    sub.prop(p, "use_proximity_group_tuning")
+
+    if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
+        # Per-group mode: draw one sub-box per group entry.
+        header         = layout.row(align=True)
+        header.scale_y = 0.6
+        header.label(text="Vertex Group")
+        header.label(text="Settings")
+        for i, pg in enumerate(p.proximity_groups):
+            grp_box = layout.box()
+            row = grp_box.row(align=True)
+            name_col         = row.column()
+            name_col.enabled = not in_preview
+            name_col.prop(pg, "group_name", text="")
+            rm_col         = row.column()
+            rm_col.enabled = not in_preview
+            op             = rm_col.operator("efit.proximity_group_remove", text="", icon='REMOVE')
+            op.index       = i
+            col = grp_box.column(align=True)
+            col.prop(pg, "proximity_mode")
+            col.prop(pg, "proximity_start")
+            col.prop(pg, "proximity_end")
+            col.prop(pg, "proximity_curve")
+        add_row         = layout.row()
+        add_row.enabled = not in_preview
+        add_row.operator("efit.proximity_group_add", text="Add Group", icon='ADD')
+    else:
+        if p.use_proximity_group_tuning:
+            # Intermediate state: tuning enabled but no groups defined yet.
+            layout.label(text="Add a group to override global settings.", icon='INFO')
+        # Global fallback controls — always shown so the user can pre-set
+        # values before adding groups.
+        col = layout.column(align=True)
+        col.prop(p, "proximity_mode")
+        col.prop(p, "proximity_start")
+        col.prop(p, "proximity_end")
+        col.prop(p, "proximity_curve")
+        if p.use_proximity_group_tuning:
+            add_row         = layout.row()
+            add_row.enabled = not in_preview
+            add_row.operator("efit.proximity_group_add", text="Add Group", icon='ADD')
+
+
+def _draw_shape_preservation(layout, p, in_preview):
+    col = layout.column(align=True)
+    col.prop(p, "smooth_factor")
+    col.prop(p, "smooth_iterations")
+    _draw_proximity_falloff(layout, p, in_preview)
+
+
+def _draw_preserve_group(layout, p, in_preview):
+    if p.clothing_obj and p.clothing_obj.type == 'MESH':
+        row         = layout.row()
+        row.enabled = not in_preview
+        row.prop(p, "preserve_group", text="Group")
+        if _resolve_vg_name(p.preserve_group):
+            col = layout.column(align=True)
+            col.prop(p, "follow_strength")
+            col.prop(p, "follow_neighbors")
+    else:
+        layout.label(text="Select clothing first", icon='INFO')
+
+
+def _draw_displacement_smoothing(layout, p):
+    col = layout.column(align=True)
+    col.prop(p, "disp_smooth_passes")
+    col.prop(p, "disp_smooth_threshold")
+    col.prop(p, "disp_smooth_min")
+    col.prop(p, "disp_smooth_max")
+    layout.prop(p, "post_laplacian")
+    if p.post_laplacian:
+        col = layout.column(align=True)
+        col.prop(p, "laplacian_factor")
+        col.prop(p, "laplacian_iterations")
+
+
+def _draw_offset_fine_tuning(layout, p, in_preview):
+    if p.offset_groups:
+        header         = layout.row(align=True)
+        header.scale_y = 0.6
+        header.label(text="Vertex Group")
+        header.label(text="Influence")
+    for i, og in enumerate(p.offset_groups):
+        row              = layout.row(align=True)
+        name_col         = row.column()
+        name_col.enabled = not in_preview
+        name_col.prop(og, "group_name", text="")
+        row.prop(og, "influence", text="")
+        rm_col         = row.column()
+        rm_col.enabled = not in_preview
+        op             = rm_col.operator("efit.offset_group_remove", text="", icon='REMOVE')
+        op.index       = i
+    add_row         = layout.row()
+    add_row.enabled = not in_preview
+    add_row.operator("efit.offset_group_add", text="Add Group", icon='ADD')
+
+
+def _draw_misc(layout, p):
+    layout.prop(p, "cleanup")
+    layout.operator("efit.reset_defaults", icon='LOOP_BACK')
+
+
+def _draw_armature_display(layout, p):
+    col = layout.column(align=True)
+    col.prop(p, "armature_display_type")
+    col.prop(p, "armature_show_in_front")
+    layout.separator()
+    layout.operator("efit.armature_display", icon='ARMATURE_DATA')
+
+
+def _draw_merge_armatures(layout, p):
+    col = layout.column(align=True)
+    col.prop(p, "merge_source_armature", icon='ARMATURE_DATA')
+    col.prop(p, "merge_target_armature", icon='ARMATURE_DATA')
+    layout.separator()
+    col = layout.column(align=True)
+    col.prop(p, "merge_bones")
+    col.prop(p, "merge_align_first")
+    layout.separator()
+    layout.operator("efit.merge_armatures", icon='CONSTRAINT_BONE')
+
+
+def _draw_mesh_split(layout, p):
+    layout.prop(p, "mesh_split_mode")
+    if p.mesh_split_mode == 'BY_VERTEX_GROUP':
+        layout.prop(p, "mesh_split_group", text="Group", icon='GROUP_VERTEX')
+    layout.separator()
+    layout.operator("efit.mesh_split", icon='MESH_DATA')
+
+
+def _draw_mesh_join(layout, p):
+    layout.prop(p, "mesh_join_merge")
+    if p.mesh_join_merge:
+        layout.prop(p, "mesh_join_threshold")
+    layout.separator()
+    layout.operator("efit.mesh_join", icon='OBJECT_DATA')
+
+
+def _tools_tab(layout, p):
+    layout.label(text="Mesh and armature utilities.", icon='TOOL_SETTINGS')
+    _section(layout, p, 'show_armature_display', _draw_armature_display, p)
+    _section(layout, p, 'show_merge_armatures',  _draw_merge_armatures,  p)
+    _section(layout, p, 'show_mesh_split',        _draw_mesh_split,       p)
+    _section(layout, p, 'show_mesh_join',         _draw_mesh_join,        p)
+
+
+def _draw_exclusive_groups(layout, p, in_preview):
+    layout.label(text="Groups to Fit", icon='GROUP_VERTEX')
+    if p.exclusive_groups:
+        header         = layout.row(align=True)
+        header.scale_y = 0.6
+        header.label(text="Vertex Group")
+        header.label(text="Influence")
+    for i, eg in enumerate(p.exclusive_groups):
+        row              = layout.row(align=True)
+        name_col         = row.column()
+        name_col.enabled = not in_preview
+        name_col.prop(eg, "group_name", text="")
+        row.prop(eg, "influence", text="")
+        rm_col         = row.column()
+        rm_col.enabled = not in_preview
+        op             = rm_col.operator("efit.exclusive_group_remove", text="", icon='REMOVE')
+        op.index       = i
+    add_row         = layout.row()
+    add_row.enabled = not in_preview
+    add_row.operator("efit.exclusive_group_add", text="Add Group", icon='ADD')
+
+
+def _draw_update_tab(layout, context):
+    p = context.scene.efit_props
+    s = updater.get_state()
+
+    # --- version header ---
+    # _meta.ADDON_VERSION is set from bl_info by __init__.register(); falls back
+    # to the placeholder (1,0,4) only if panels.py is imported before register().
+    version_str = "v" + ".".join(str(x) for x in _meta.ADDON_VERSION)
+    # _nightly_content is populated at module load and after each download; no
+    # disk I/O occurs inside this draw function.
+    nightly_ts = _nightly_content
+    if nightly_ts:
+        parts = nightly_ts.split()
+        ts_part = parts[0] if parts else nightly_ts
+        commit_part = parts[1] if len(parts) > 1 else ''
+        if len(ts_part) >= 8 and ts_part[:8].isdigit():
+            d = ts_part[:8]
+            display_date = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+        else:
+            display_date = ts_part
+        suffix = f"-nightly ({display_date})"
+        if commit_part:
+            suffix += f" [{commit_part}]"
+        version_str += suffix
+    split = layout.split(factor=0.4)
+    split.label(text="Addon")
+    split.label(text=version_str)
+    split = layout.split(factor=0.4)
+    split.label(text="Blender")
+    # _BLENDER_VERSION_STR is computed once at module load — no per-draw format.
+    split.label(text=_BLENDER_VERSION_STR)
+    layout.separator()
+
+    # --- nightly channel toggle (developer mode only) ---
+    # _cached_developer_mode is kept current by the BoolProperty update= callback
+    # in properties.py; no preferences.addons traversal per redraw.
+    developer_mode = _cached_developer_mode
+    if developer_mode:
+        layout.prop(p, "use_nightly_channel")
+        if updater._is_dev_mode():
+            layout.prop(p, "dev_update_url")
+        layout.separator()
+    elif p.use_nightly_channel:
+        # Already opted in before dev mode was introduced — keep it visible so
+        # the user can turn it off, but add a note about where the setting lives.
+        layout.prop(p, "use_nightly_channel")
+        layout.label(text="Enable Developer Mode in Preferences to manage this.", icon='INFO')
+        layout.separator()
+
+    if s['status'] == 'checking':
+        layout.label(text="Checking for updates...", icon='SORTTIME')
+
+    elif s['status'] == 'up_to_date':
+        row = layout.row()
+        row.label(text="Up to date.", icon='CHECKMARK')
+        row.operator("efit.check_update", text="", icon='FILE_REFRESH')
+
+    elif s['status'] == 'available':
+        layout.label(text=f"Update available: {s['tag']}", icon='ERROR')
+        if s.get('blender_blocked'):
+            req = s['blender_min_required']
+            req_str = '.'.join(str(x) for x in req)
+            layout.label(text=f"Requires Blender {req_str} or later.", icon='ERROR')
+        dl_col = layout.column()
+        dl_col.enabled = not s.get('blender_blocked', False)
+        dl_col.operator("efit.download_update",
+                        text=f"Download {s['tag']}", icon='IMPORT')
+        layout.operator("efit.check_update", text="Re-check", icon='FILE_REFRESH')
+
+    elif s['status'] == 'downloading':
+        pct = int(s['progress'] * 100)
+        layout.label(text=f"Downloading... {pct}%", icon='SORTTIME')
+
+    elif s['status'] == 'ready':
+        layout.label(text=f"{s['tag']} downloaded.", icon='INFO')
+        has_filepath = bool(bpy.data.filepath)
+        if has_filepath:
+            if bpy.data.is_dirty:
+                layout.prop(p, "update_save_file")
+            layout.prop(p, "update_reopen_file")
+        else:
+            warn       = layout.box()
+            warn.alert = True
+            warn.label(text="Your .blend file is untitled and unsaved.", icon='ERROR')
+            warn.label(text="Save before restarting or lose work.")
+        layout.operator("efit.install_restart",
+                        text="Restart and Install", icon='LOOP_BACK')
+
+    elif s['status'] == 'error':
+        lines = _wrap_text("Error: " + s['error'], max_chars=40, max_lines=3)
+        for i, line in enumerate(lines):
+            layout.label(text=line, icon='ERROR' if i == 0 else 'NONE')
+        layout.operator("efit.check_update", text="Try Again", icon='FILE_REFRESH')
+
+    else:
+        row = layout.row()
+        row.label(text="", icon='CHECKMARK')
+        row.operator("efit.check_update", text="Check for Updates", icon='FILE_REFRESH')
+
+
+# ---------------------------------------------------------------------------
+# Tab content functions
+# ---------------------------------------------------------------------------
+
+def _draw_exclusive_mode_warning(layout):
+    """Warning box shown when exclusive vertex group mode is active."""
+    warn       = layout.box()
+    warn.alert = True
+    warn.label(text="Exclusive Vertex Group Mode Active", icon='INFO')
+    warn.label(text="Only vertices in the listed groups")
+    warn.label(text="will be moved by the fit.")
+
+
+def _full_tab(layout, p, in_preview):
+    _draw_mesh_pickers(layout, p, in_preview)
+    _draw_blocker_warnings(layout, p)
+
+    # Exclusive mode toggle — sits between pickers and action buttons.
+    layout.separator()
+    row         = layout.row(align=True)
+    row.enabled = not in_preview
+    row.prop(p, "use_exclusive_mode", toggle=True, icon='GROUP_VERTEX')
+
+    is_exclusive = p.fit_mode == 'EXCLUSIVE'
+
+    if is_exclusive:
+        _draw_exclusive_mode_warning(layout)
+        _draw_exclusive_groups(layout, p, in_preview)
+
+    _draw_action_buttons(layout, p, in_preview)
+
+    layout.separator()
+
+    _section(layout, p, 'show_fit_settings',      _draw_fit_settings,       p, in_preview)
+    _section(layout, p, 'show_shape_preservation', _draw_shape_preservation, p, in_preview)
+    if not is_exclusive:
+        _section(layout, p, 'show_preserve_group', _draw_preserve_group, p, in_preview)
+
+    layout.separator()
+
+    if _collapsible(layout, p, 'show_advanced'):
+        _section(layout, p, 'show_displacement_smoothing', _draw_displacement_smoothing, p)
+        _section(layout, p, 'show_offset_fine_tuning',     _draw_offset_fine_tuning,     p, in_preview)
+        _section(layout, p, 'show_misc',                   _draw_misc,                   p)
+
+
+# ---------------------------------------------------------------------------
+# Panel
+# ---------------------------------------------------------------------------
+
 class SVRC_PT_elastic_fit(Panel):
     bl_label       = "Elastic Clothing Fit"
     bl_idname      = "SVRC_PT_elastic_fit"
@@ -42,237 +528,23 @@ class SVRC_PT_elastic_fit(Panel):
         p          = context.scene.efit_props
         in_preview = bool(state._efit_cache)
 
-        # -- Mesh selection --
-        box         = layout.box()
-        box.enabled = not in_preview
-        box.label(text="Select Meshes", icon='MESH_DATA')
-        box.prop(p, "body_obj",     icon='OUTLINER_OB_MESH')
-        box.prop(p, "clothing_obj", icon='MATCLOTH')
-
-        # -- Blocker warnings --
-        if p.clothing_obj and p.clothing_obj.type == 'MESH':
-            has_sk, blocker_mods = _has_blockers(p.clothing_obj)
-            if has_sk or blocker_mods:
-                warn_box       = layout.box()
-                warn_box.alert = True
-                warn_box.label(text="Blockers Detected", icon='ERROR')
-                if has_sk:
-                    sk_count = len(p.clothing_obj.data.shape_keys.key_blocks)
-                    warn_box.label(text=f"  {sk_count} shape key(s)", icon='SHAPEKEY_DATA')
-                if blocker_mods:
-                    warn_box.label(
-                        text=f"  {len(blocker_mods)} modifier(s): {', '.join(blocker_mods[:3])}"
-                             + ("..." if len(blocker_mods) > 3 else ""),
-                        icon='MODIFIER',
-                    )
-                warn_box.operator("efit.clear_blockers", icon='TRASH')
-
-        # -- Fit Mode toggle --
-        # Disabled during preview so mode cannot change while a fit is active.
-        mode_row         = layout.row(align=True)
-        mode_row.enabled = not in_preview
-        mode_row.prop(p, "fit_mode", expand=True)
-        if p.fit_mode == 'EXCLUSIVE':
-            warn       = layout.box()
-            warn.alert = True
-            warn.label(text="Exclusive mode: only selected vertex groups will be fitted.", icon='ERROR')
-            warn.label(text="Fit mode resets to Full Mesh Fit after Apply or Cancel.")
-
-        # -- Action buttons --
-        layout.separator()
-
         if in_preview:
-            box = layout.box()
-            box.label(text="Preview Active", icon='HIDE_OFF')
-            box.label(text="Adjust sliders to see changes live.")
-            row          = box.row(align=True)
-            row.scale_y  = 1.5
-            row.operator("efit.preview_apply",  icon='CHECKMARK', text="Apply")
-            row.operator("efit.preview_cancel", icon='CANCEL',    text="Cancel")
-        else:
-            row         = layout.row(align=True)
-            row.scale_y = 1.5
-            row.operator("efit.fit",    icon='CHECKMARK')
-            row.operator("efit.remove", icon='X')
+            alert_row       = layout.row()
+            alert_row.alert = True
+            alert_row.label(
+                text="Preview Mode — Adjust sliders, then Apply or Cancel",
+                icon='HIDE_OFF',
+            )
 
-        # -- Advanced Settings (collapsed by default) --
+        row         = layout.row(align=True)
+        row.enabled = not in_preview
+        row.prop(p, "ui_tab", expand=True)
+
         layout.separator()
-        box = layout.box()
-        row = box.row()
-        row.prop(p, "show_advanced",
-                 icon='TRIA_DOWN' if p.show_advanced else 'TRIA_RIGHT',
-                 emboss=False)
 
-        if p.show_advanced:
-
-            if in_preview:
-                note = box.row()
-                note.label(text="Some options are locked during preview.", icon='INFO')
-
-            # Exclusive Groups (shown at top of Advanced Settings in EVGF mode)
-            if p.fit_mode == 'EXCLUSIVE':
-                sub = box.box()
-                sub.label(text="Groups to Fit", icon='GROUP_VERTEX')
-                if p.exclusive_groups:
-                    header          = sub.row(align=True)
-                    header.scale_y  = 0.6
-                    header.label(text="Vertex Group")
-                    header.label(text="Influence")
-                for i, eg in enumerate(p.exclusive_groups):
-                    row = sub.row(align=True)
-                    # Group name and remove button locked during preview; influence stays live.
-                    name_col         = row.column()
-                    name_col.enabled = not in_preview
-                    name_col.prop(eg, "group_name", text="")
-                    row.prop(eg, "influence", text="")
-                    rm_col         = row.column()
-                    rm_col.enabled = not in_preview
-                    op             = rm_col.operator("efit.exclusive_group_remove", text="", icon='REMOVE')
-                    op.index       = i
-                add_row         = sub.row()
-                add_row.enabled = not in_preview
-                add_row.operator("efit.exclusive_group_add", text="Add Group", icon='ADD')
-
-            # Fit Settings
-            sub = box.box()
-            sub.label(text="Fit Settings", icon='MOD_SHRINKWRAP')
-            sub.prop(p, "fit_amount")
-            sub.prop(p, "offset")
-
-            row         = sub.row()
-            row.enabled = not in_preview
-            row.prop(p, "proxy_triangles")
-
-            row         = sub.row()
-            row.enabled = not in_preview
-            row.prop(p, "preserve_uvs")
-
-            # Shape Preservation
-            sub = box.box()
-            sub.label(text="Shape Preservation", icon='MOD_SMOOTH')
-            sub.prop(p, "smooth_factor")
-            sub.prop(p, "smooth_iterations")
-
-            # Post-Fit Options
-            sub = box.box()
-            sub.label(text="Post-Fit Options", icon='TOOL_SETTINGS')
-
-            row         = sub.row()
-            row.enabled = not in_preview
-            row.prop(p, "post_symmetrize")
-            if p.post_symmetrize and not in_preview:
-                row.prop(p, "symmetrize_axis", text="")
-
-            sub.prop(p, "post_laplacian")
-            if p.post_laplacian:
-                col = sub.column(align=True)
-                col.prop(p, "laplacian_factor")
-                col.prop(p, "laplacian_iterations")
-
-            # Preserve Group (hidden in EVGF mode; exclusive groups take its place)
-            if p.fit_mode == 'FULL':
-                sub = box.box()
-                sub.label(text="Preserve Group (Optional)", icon='PINNED')
-                if p.clothing_obj and p.clothing_obj.type == 'MESH':
-                    sub.prop(p, "preserve_group", text="Group")
-                    if p.preserve_group:
-                        sub.prop(p, "follow_strength")
-                else:
-                    sub.label(text="Select clothing first", icon='INFO')
-
-            # Displacement Smoothing
-            sub = box.box()
-            col = sub.column(align=True)
-            col.label(text="Displacement Smoothing:")
-            col.prop(p, "disp_smooth_passes")
-            col.prop(p, "disp_smooth_threshold")
-            col.prop(p, "disp_smooth_min")
-            col.prop(p, "disp_smooth_max")
-
-            # Preserve Follow
-            col.separator()
-            col.label(text="Preserve Follow:")
-            col.prop(p, "follow_neighbors")
-
-            # Offset Fine Tuning (hidden in EVGF mode; exclusive groups carry their own influence)
-            if p.fit_mode == 'FULL':
-                col.separator()
-                col.label(text="Offset Fine Tuning:")
-                if p.offset_groups:
-                    header          = col.row(align=True)
-                    header.scale_y  = 0.6
-                    header.label(text="Vertex Group")
-                    header.label(text="Influence")
-                for i, og in enumerate(p.offset_groups):
-                    row = col.row(align=True)
-                    row.prop(og, "group_name", text="")
-                    row.prop(og, "influence", text="")
-                    op       = row.operator("efit.offset_group_remove", text="", icon='REMOVE')
-                    op.index = i
-                col.operator("efit.offset_group_add", text="Add Group", icon='ADD')
-
-            # Misc
-            box.separator()
-            row = box.row()
-            row.prop(p, "cleanup")
-            row.operator("efit.reset_defaults", icon='LOOP_BACK')
-
-        # -- Updates --
-        layout.separator()
-        upd = layout.box()
-        s   = updater.get_state()
-
-        if s['status'] == 'checking':
-            upd.label(text="Checking for updates...", icon='SORTTIME')
-
-        elif s['status'] == 'up_to_date':
-            row = upd.row()
-            row.label(text="Up to date.", icon='CHECKMARK')
-            row.operator("efit.check_update", text="", icon='FILE_REFRESH')
-
-        elif s['status'] == 'available':
-            upd.label(text=f"Update available: {s['tag']}", icon='ERROR')
-            upd.operator("efit.download_update",
-                         text=f"Download {s['tag']}", icon='IMPORT')
-            upd.operator("efit.check_update", text="Re-check", icon='FILE_REFRESH')
-
-        elif s['status'] == 'downloading':
-            pct = int(s['progress'] * 100)
-            upd.label(text=f"Downloading... {pct}%", icon='SORTTIME')
-
-        elif s['status'] == 'ready':
-            upd.label(text=f"{s['tag']} downloaded.", icon='INFO')
-            has_filepath = bool(bpy.data.filepath)
-            if has_filepath:
-                if bpy.data.is_dirty:
-                    upd.prop(p, "update_save_file")
-                upd.prop(p, "update_reopen_file")
-            else:
-                warn = upd.box()
-                warn.alert = True
-                warn.label(text="File not saved - save manually", icon='ERROR')
-                warn.label(text="before restarting to keep your work.")
-            upd.operator("efit.install_restart",
-                         text="Restart and Install", icon='LOOP_BACK')
-
-        elif s['status'] == 'error':
-            lines = _wrap_text("Error: " + s['error'], max_chars=40, max_lines=3)
-            for i, line in enumerate(lines):
-                upd.label(text=line, icon='ERROR' if i == 0 else 'NONE')
-            upd.operator("efit.check_update", text="Try Again", icon='FILE_REFRESH')
-
-        # Dev sub-box: visible only when the preference is enabled
-        addon_prefs = context.preferences.addons.get(__package__)
-        dev_mode    = addon_prefs.preferences.dev_update_testing if addon_prefs else False
-
-        if dev_mode:
-            dev_box       = upd.box()
-            dev_box.alert = True
-            dev_box.label(text="Dev mode: install uses local file only", icon='ERROR')
-
-            zip_row = dev_box.row(align=True)
-            zip_row.prop(p, "dev_local_zip", text="Local Zip")
-            zip_row.operator("efit.browse_local_zip", text="", icon='FILE_FOLDER')
-
-            dev_box.prop(p, "dev_override_newer")
-            dev_box.prop(p, "dev_override_uptodate")
+        if p.ui_tab == 'FULL':
+            _full_tab(layout, p, in_preview)
+        elif p.ui_tab == 'TOOLS':
+            _tools_tab(layout, p)
+        elif p.ui_tab == 'UPDATE':
+            _draw_update_tab(layout, context)

@@ -3,12 +3,24 @@
 # Also owns the property update callbacks and modifier sync helpers that are
 # referenced by EFitOffsetGroup and EFitProperties in properties.py.
 
+import time
+
+import numpy as np
 import mathutils
 from mathutils.kdtree import KDTree
 
 import bpy
 
+from . import deps
+
 from . import state
+from .properties import _resolve_vg_name
+
+# Stores the per-section timings from the most recent tick when developer mode
+# is enabled.  None until the first tick completes with dev mode on.
+# Inspectable by headless benchmark scripts:
+#   import elastic_fit.preview as preview; print(preview._last_tick_timings)
+_last_tick_timings: "dict | None" = None
 
 
 def _efit_preview_update(context):
@@ -28,11 +40,22 @@ def _efit_preview_update(context):
 
     state._efit_updating = True
     try:
+        # --- Profiling: resolve developer mode via deferred import ---
+        try:
+            from . import panels as _panels
+            _dev_mode = _panels._cached_developer_mode
+        except Exception:
+            _dev_mode = False
+
+        _t_adj = _t_smooth = _t_prox = _t_cobuf = _t_offgrp = _t_preserve = _t_fset = 0.0
+        if _dev_mode:
+            _t_total_start = time.perf_counter()
+
         p = context.scene.efit_props
         cloth = bpy.data.objects.get(c['cloth_name'])
         if cloth is None:
             return
-        all_originals        = c['all_originals']
+        all_originals        = c['all_originals']   # np.ndarray (N_total, 3)
         cloth_displacements  = c['cloth_displacements']
         cloth_adj            = c['cloth_adj']
         fitted_indices       = c['fitted_indices']
@@ -43,82 +66,127 @@ def _efit_preview_update(context):
         # Adjust each displacement along the cached body-surface normal by the
         # difference between the current offset and the offset baked into the
         # cache, so the preview stays live without re-running shrinkwrap.
-        offset_delta      = p.offset - c.get('original_offset', p.offset)
+        offset_delta       = p.offset - c.get('original_offset', p.offset)
         cloth_body_normals = c.get('cloth_body_normals', {})
 
-        adjusted_displacements = {}
-        for vi in fitted_indices:
-            d = cloth_displacements[vi].copy()
-            if offset_delta != 0.0 and vi in cloth_body_normals:
-                d += cloth_body_normals[vi] * offset_delta
-            adjusted_displacements[vi] = d
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        if offset_delta != 0.0:
+            adjusted = cloth_displacements + cloth_body_normals * offset_delta
+        else:
+            adjusted = cloth_displacements
+        if _dev_mode:
+            _t_adj = time.perf_counter() - _t0
 
         # Re-run adaptive displacement smoothing with the current slider values.
-        smoothed = {vi: adjusted_displacements[vi].copy() for vi in fitted_indices}
+        # return_array=True: get raw (N_fitted, 3) ndarray — avoids N Vector
+        # allocations in _smooth_displacements and N more in the write loop below.
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        smoothed_arr = state._smooth_displacements(
+            adjusted, fitted_indices, cloth_adj, p,
+            return_array=True)
+        if _dev_mode:
+            _t_smooth = time.perf_counter() - _t0
 
-        ds_passes      = p.disp_smooth_passes
-        ds_thresh_mult = p.disp_smooth_threshold
-        ds_min         = p.disp_smooth_min
-        ds_max         = p.disp_smooth_max
-
-        # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
-        # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
-        # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
-        # between pant legs) while leaving smooth regions untouched.
-        for _pass in range(ds_passes):
-            gradient = {}
-            for vi in fitted_indices:
-                neighbors = cloth_adj[vi]
-                if not neighbors:
-                    gradient[vi] = 0.0
-                    continue
-                d = smoothed[vi]
-                max_diff = 0.0
-                for ni in neighbors:
-                    diff = (d - smoothed[ni]).length
-                    if diff > max_diff:
-                        max_diff = diff
-                gradient[vi] = max_diff
-
-            grad_values = sorted(gradient.values())
-            median_grad = grad_values[len(grad_values) // 2] if grad_values else 0.0
-
-            new_smoothed = {}
-            for vi in fitted_indices:
-                neighbors = cloth_adj[vi]
-                if not neighbors:
-                    new_smoothed[vi] = smoothed[vi].copy()
-                    continue
-                g = gradient[vi]
-                threshold = max(median_grad * ds_thresh_mult, 0.0001)
-                if g <= threshold:
-                    blend = ds_min
+        # --- Fix C: proximity weights ---
+        # Proximity weights are a pure function of body distances (static) and
+        # the proximity slider values.  Cache a shadow of those values and skip
+        # recomputation when nothing proximity-related has changed.
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        proximity_weights = None
+        if p.use_proximity_falloff:
+            cloth_body_distances = c.get('cloth_body_distances', {})
+            if cloth_body_distances:
+                # Build a key from the current proximity slider values.
+                _use_pg = p.use_proximity_group_tuning and len(p.proximity_groups) > 0
+                _prox_key = (
+                    _use_pg,
+                    p.proximity_start, p.proximity_end, p.proximity_curve,
+                )
+                if c.get('_prox_key') == _prox_key and c.get('proximity_weights') is not None:
+                    # Inputs unchanged — reuse cached weights.
+                    proximity_weights = c['proximity_weights']
                 else:
-                    t = min(1.0, (g - threshold) / max(threshold, 0.0001))
-                    blend = ds_min + (ds_max - ds_min) * t
-                avg = mathutils.Vector((0.0, 0.0, 0.0))
-                for ni in neighbors:
-                    avg += smoothed[ni]
-                avg /= len(neighbors)
-                new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
-            smoothed = new_smoothed
+                    if _use_pg:
+                        proximity_weights = state._compute_proximity_group_weights(
+                            cloth, p.proximity_groups, cloth_body_distances, fitted_indices,
+                            vg_membership=c.get('vg_membership'))
+                    else:
+                        proximity_weights = state._compute_proximity_weights(
+                            cloth_body_distances, fitted_indices,
+                            p.proximity_start, p.proximity_end, p.proximity_curve)
+                    c['proximity_weights'] = proximity_weights
+                    c['_prox_key'] = _prox_key
+        if _dev_mode:
+            _t_prox = time.perf_counter() - _t0
 
-        for vi in fitted_indices:
-            cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
+        # --- Fix A + Fix B: build co_buf without reading the mesh ---
+        # all_originals is an np.ndarray (N_total, 3).  We write only fitted
+        # (and later preserved) vertex positions — non-fitted verts are never
+        # touched, so there is no need to read the whole mesh first.
+        # smoothed_arr is already an (N_fitted, 3) ndarray; index it by position.
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        n_verts   = len(cloth.data.vertices)
+        co_buf    = np.empty(n_verts * 3, dtype=np.float64)
+        fi_arr    = np.array(fitted_indices, dtype=np.int32)
 
-        # Save each fitted vertex's position before any offset fine-tuning is applied.
-        # The preserve group follow step reads from these saved positions, so offset
-        # adjustments on fitted areas cannot unintentionally move nearby preserved vertices.
-        pre_offset_positions = {vi: cloth.data.vertices[vi].co.copy() for vi in fitted_indices}
+        # Vectorised write: all_originals[fi_arr] is (N_fitted, 3); smoothed_arr
+        # rows align by position with fitted_indices.
+        if proximity_weights is not None:
+            pw_arr = np.fromiter(
+                (proximity_weights[vi] for vi in fitted_indices),
+                dtype=np.float64, count=len(fitted_indices))
+            fitted_pos = all_originals[fi_arr] + smoothed_arr * (fit * pw_arr[:, None])
+        else:
+            fitted_pos = all_originals[fi_arr] + smoothed_arr * fit
 
+        # Scatter fitted positions into co_buf using COO-style index assignment.
+        # fi_arr gives the vertex indices; multiply by 3 for the flat buffer offset.
+        base_arr = fi_arr * 3
+        co_buf[base_arr]     = fitted_pos[:, 0]
+        co_buf[base_arr + 1] = fitted_pos[:, 1]
+        co_buf[base_arr + 2] = fitted_pos[:, 2]
+
+        # Non-fitted vertices: read their current positions from all_originals so
+        # the foreach_set has valid data everywhere (they are never deformed here).
+        # Build a mask and fill in one vectorised pass.
+        fitted_mask = np.zeros(n_verts, dtype=bool)
+        fitted_mask[fi_arr] = True
+        non_fitted = np.where(~fitted_mask)[0].astype(np.int32)
+        if len(non_fitted):
+            nf_base = non_fitted * 3
+            nf_pos  = all_originals[non_fitted]
+            co_buf[nf_base]     = nf_pos[:, 0]
+            co_buf[nf_base + 1] = nf_pos[:, 1]
+            co_buf[nf_base + 2] = nf_pos[:, 2]
+        if _dev_mode:
+            _t_cobuf = time.perf_counter() - _t0
+
+        # Snapshot pre-offset positions from fitted_pos (already in memory).
         offset_group_weights = c.get('offset_group_weights', {})
         original_offset = c.get('original_offset', 0.0)
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        if offset_group_weights and original_offset != 0.0:
+        has_offset_work = bool(offset_group_weights and original_offset != 0.0)
+        needs_preserve  = has_preserve and preserved_indices and p.follow_strength > 0.0
+        if has_offset_work or needs_preserve:
+            # fitted_pos rows align with fitted_indices by position — use directly.
+            pre_offset_positions = fitted_pos
+        else:
+            pre_offset_positions = None
+
+        # Accumulate offset group deltas directly into co_buf.
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        if has_offset_work:
+            vi_to_pos = c.get('smooth_vi_to_pos', {})
             for og in source_groups:
-                if not og.group_name:
+                og_name = _resolve_vg_name(og.group_name)
+                if not og_name:
                     continue
-                weights = offset_group_weights.get(og.group_name)
+                weights = offset_group_weights.get(og_name)
                 if not weights:
                     continue
                 # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)
@@ -126,19 +194,64 @@ def _efit_preview_update(context):
                 if abs(mult_delta) < 0.0001:
                     continue
                 for vi, w in weights.items():
-                    if vi in cloth_body_normals:
-                        cloth.data.vertices[vi].co += (
-                            cloth_body_normals[vi] * (original_offset * mult_delta * w)
-                        )
+                    pos = vi_to_pos.get(vi)
+                    if pos is not None:
+                        n     = cloth_body_normals[pos]
+                        delta = original_offset * mult_delta * w
+                        base  = vi * 3
+                        co_buf[base]     += n[0] * delta
+                        co_buf[base + 1] += n[1] * delta
+                        co_buf[base + 2] += n[2] * delta
+        if _dev_mode:
+            _t_offgrp = time.perf_counter() - _t0
 
-        if has_preserve and preserved_indices and fitted_indices:
+        # Preserve-follow: move preserved vertices to follow nearby fitted areas.
+        # Guard uses needs_preserve so follow_strength=0 skips entirely.
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        if needs_preserve and fitted_indices:
             strength = p.follow_strength
-            if strength > 0.0:
-                current_positions = pre_offset_positions
+            K_follow = min(p.follow_neighbors, len(fitted_indices))
+            current_positions = pre_offset_positions  # ndarray (N_fitted, 3)
 
-                # Lazily build and cache the KDTree on first preview call.
-                # Rest-pose positions are used so neighbor selection stays stable
-                # as the mesh deforms across slider changes.
+            # Pre-compute per-fitted-vertex displacement once (vectorized).
+            # fitted_disp[i] = current_positions[i] - all_originals[fitted_indices[i]]
+            fi_arr = np.array(fitted_indices, dtype=np.int32)
+            fitted_disp = current_positions - all_originals[fi_arr]
+
+            if deps.PYKDTREE_AVAILABLE:
+                # --- Fast path: pykdtree batch query ---
+                # Build/reuse a pykdtree from rest-pose fitted positions (float32).
+                kd_follow = c.get('kd_follow')
+                if kd_follow is None:
+                    fitted_rest = all_originals[fi_arr].astype(np.float32)
+                    kd_follow = deps.BatchKDTree(fitted_rest)
+                    c['kd_follow'] = kd_follow
+
+                pres_arr = all_originals[np.array(preserved_indices, dtype=np.int32)].astype(np.float32)
+                dists, idxs = kd_follow.query(pres_arr, k=K_follow)  # (N_pres, K)
+                inv_d = 1.0 / np.maximum(dists, np.float32(1e-4))    # (N_pres, K)
+                w_sum = inv_d.sum(axis=1, keepdims=True)              # (N_pres, 1)
+                k_disp = fitted_disp.astype(np.float32)[idxs]        # (N_pres, K, 3)
+                weighted = (k_disp * inv_d[:, :, None]).sum(axis=1) / w_sum  # (N_pres, 3)
+
+                # Write results into co_buf for all preserved vertices at once.
+                pres_indices_arr = np.array(preserved_indices, dtype=np.int64)
+                base_cols = pres_indices_arr * 3
+                # Only update vertices with non-negligible displacement (threshold 1e-7).
+                magnitudes = np.abs(weighted).sum(axis=1)             # (N_pres,)
+                mask = magnitudes >= 1e-7
+                if mask.any():
+                    rest_coords = pres_arr[mask]                      # (M, 3) float32
+                    disp_scaled = weighted[mask] * np.float32(strength)
+                    new_coords  = rest_coords + disp_scaled           # (M, 3)
+                    cols = base_cols[mask]
+                    co_buf[cols]     = new_coords[:, 0]
+                    co_buf[cols + 1] = new_coords[:, 1]
+                    co_buf[cols + 2] = new_coords[:, 2]
+
+            else:
+                # --- Fallback path: sequential mathutils.KDTree ---
                 kd_follow = c.get('kd_follow')
                 if kd_follow is None:
                     kd_follow = KDTree(len(fitted_indices))
@@ -147,31 +260,86 @@ def _efit_preview_update(context):
                     kd_follow.balance()
                     c['kd_follow'] = kd_follow
 
-                K_follow = min(p.follow_neighbors, len(fitted_indices))
                 for vi in preserved_indices:
-                    rest_pos  = all_originals[vi]
-                    neighbors = kd_follow.find_n(rest_pos, K_follow)
-                    total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
+                    rest = all_originals[vi]
+                    neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
+                    tx = ty = tz = 0.0
                     total_weight = 0.0
-                    for co, idx, dist in neighbors:
-                        ni    = fitted_indices[idx]
-                        disp  = current_positions[ni] - all_originals[ni]
-                        w     = 1.0 / max(dist, 0.0001)
-                        total_disp   += disp * w
+                    for _co, idx, dist in neighbors:
+                        d = fitted_disp[idx]
+                        w  = 1.0 / max(dist, 0.0001)
+                        tx += d[0] * w
+                        ty += d[1] * w
+                        tz += d[2] * w
                         total_weight += w
                     if total_weight > 0.0:
-                        avg_disp = total_disp / total_weight
-                        cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
+                        inv_w = 1.0 / total_weight
+                        dx = tx * inv_w
+                        dy = ty * inv_w
+                        dz = tz * inv_w
+                        if abs(dx) + abs(dy) + abs(dz) >= 1e-7:
+                            base = vi * 3
+                            co_buf[base]     = rest[0] + dx * strength
+                            co_buf[base + 1] = rest[1] + dy * strength
+                            co_buf[base + 2] = rest[2] + dz * strength
+        if _dev_mode:
+            _t_preserve = time.perf_counter() - _t0
 
+        if _dev_mode:
+            _t0 = time.perf_counter()
+        cloth.data.vertices.foreach_set("co", co_buf)
         cloth.data.update()
+        if _dev_mode:
+            _t_fset = time.perf_counter() - _t0
+
+        if _dev_mode:
+            _t_total = time.perf_counter() - _t_total_start
+            print(
+                f"[ECF] tick"
+                f"  adj={_t_adj*1000:.2f}ms"
+                f"  smooth={_t_smooth*1000:.2f}ms"
+                f"  prox={_t_prox*1000:.2f}ms"
+                f"  cobuf={_t_cobuf*1000:.2f}ms"
+                f"  offgrp={_t_offgrp*1000:.2f}ms"
+                f"  preserve={_t_preserve*1000:.2f}ms"
+                f"  fset={_t_fset*1000:.2f}ms"
+                f"  TOTAL={_t_total*1000:.2f}ms"
+            )
+            import elastic_fit.preview as _self_mod
+            _self_mod._last_tick_timings = {
+                'adj':      _t_adj,
+                'smooth':   _t_smooth,
+                'prox':     _t_prox,
+                'cobuf':    _t_cobuf,
+                'offgrp':   _t_offgrp,
+                'preserve': _t_preserve,
+                'fset':     _t_fset,
+                'total':    _t_total,
+            }
+
         if context.screen:
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
-    except Exception:
-        pass
+    except Exception as exc:
+        import traceback
+        state._efit_last_error = str(exc)
+        print(f"[ECF] preview update failed: {exc}")
+        traceback.print_exc()
     finally:
         state._efit_updating = False
+
+
+def _on_tab_change(self, context):
+    """Called when the user switches UI tabs.
+
+    Previously this synced fit_mode to the tab, but fit_mode is now exclusively
+    controlled by the use_exclusive_mode toggle (_on_exclusive_mode_toggle in
+    properties.py). Switching tabs must never alter fit_mode or use_exclusive_mode.
+    This handler is kept for future tab-change side-effects (e.g. cancelling an
+    in-progress preview when leaving the Fit tab).
+    """
+    pass
 
 
 def _on_preview_prop_update(self, context):
@@ -259,22 +427,36 @@ def _on_offset_group_name_update(self, context):
         return
     fitted_indices = state._efit_cache.get('fitted_indices', [])
     p = context.scene.efit_props
-    offset_group_weights = {}
-    for og in p.offset_groups:
-        if not og.group_name:
+    # Build VG membership inline (non-hot-path: only fires on group name change).
+    # {vg_idx: {vi: weight}} — weight stored at build time for offset group fast-path.
+    fitted_set = state._efit_cache.get('fitted_set') or set(fitted_indices)
+    vg_membership = {}
+    for v in cloth.data.vertices:
+        if v.index not in fitted_set:
             continue
-        vg = cloth.vertex_groups.get(og.group_name)
-        if vg is None:
-            continue
-        weights = {}
-        for vi in fitted_indices:
-            try:
-                w = vg.weight(vi)
-            except RuntimeError:
-                w = 0.0
-            if w > 0.0:
-                weights[vi] = w
-        if weights:
-            offset_group_weights[og.group_name] = weights
-    state._efit_cache['offset_group_weights'] = offset_group_weights
+        for g in v.groups:
+            if g.weight > 0.0:
+                vg_membership.setdefault(g.group, {})[v.index] = g.weight
+    state._efit_cache['vg_membership'] = vg_membership
+    state._efit_cache['offset_group_weights'] = state._compute_offset_group_weights(
+        cloth, p.offset_groups, fitted_indices, vg_membership=vg_membership)
     _efit_preview_update(context)
+
+
+def _on_proximity_group_prop_update(self, context):
+    """Property update callback: refreshes the preview when any per-group proximity
+    slider (mode, start, end, curve) changes."""
+    if state._efit_cache:
+        # Bust the proximity weight cache so the next tick recomputes.
+        state._efit_cache.pop('_prox_key', None)
+        _efit_preview_update(context)
+
+
+def _on_proximity_group_name_update(self, context):
+    """Property update callback: refreshes the preview when a proximity group's
+    vertex group selection changes.  Weight recomputation happens inside
+    _efit_preview_update via the per-group path."""
+    if state._efit_cache:
+        # Bust the proximity weight cache so the next tick recomputes.
+        state._efit_cache.pop('_prox_key', None)
+        _efit_preview_update(context)

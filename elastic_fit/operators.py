@@ -1,413 +1,37 @@
 # operators.py
 # All Blender operators for Elastic Clothing Fit.
-# EFIT_OT_fit contains the full fitting pipeline (proxy creation, shrinkwrap,
-# BVH displacement transfer, adaptive smoothing, offset fine-tuning, preserve follow).
-# The remaining operators handle preview apply/cancel, remove, clear blockers,
-# reset defaults, and offset group list management.
+# Pipeline helpers (proxy creation, shrinkwrap, BVH displacement transfer,
+# adaptive smoothing, offset fine-tuning, preserve follow) live in pipeline.py.
 
+import numpy as np
 import mathutils
-from mathutils.kdtree import KDTree
-from mathutils.bvhtree import BVHTree
 
 import bpy
-from bpy.props import IntProperty, StringProperty
+from bpy.props import IntProperty
 from bpy.types import Operator
 
 from . import state
 from . import updater
+from . import deps
 from .state import (
     EFIT_PREFIX,
-    _has_blockers, _calc_subdivisions,
+    _has_blockers,
     _save_uvs, _restore_uvs, _remove_efit,
 )
+from .properties import _resolve_vg_name
 from .preview import _efit_preview_update, _sync_preview_modifiers
-
-
-# ---------------------------------------------------------------------------
-# Fitting pipeline helpers (called exclusively by EFIT_OT_fit.execute)
-# ---------------------------------------------------------------------------
-
-def _efit_save_originals(cloth):
-    """Snapshot all vertex positions for undo and displacement math.
-
-    Returns (all_originals, undo_flat) where all_originals maps vertex index to
-    Vector and undo_flat is a flat float list suitable for custom property storage.
-    """
-    all_originals = {}
-    undo_flat = [0.0] * (len(cloth.data.vertices) * 3)
-    for v in cloth.data.vertices:
-        all_originals[v.index] = v.co.copy()
-        idx = v.index * 3
-        undo_flat[idx]     = v.co.x
-        undo_flat[idx + 1] = v.co.y
-        undo_flat[idx + 2] = v.co.z
-    return all_originals, undo_flat
-
-
-def _efit_create_proxy(context, cloth, p):
-    """Duplicate the clothing mesh, strip modifiers, and subdivide to the target triangle count.
-
-    Returns (proxy, actual_tris, subdiv_levels) on success, or (None, 0, 0) on failure.
-    """
-    bpy.ops.object.select_all(action='DESELECT')
-    cloth.select_set(True)
-    context.view_layer.objects.active = cloth
-    if 'FINISHED' not in bpy.ops.object.duplicate(linked=False):
-        return None, 0, 0
-    proxy = context.active_object
-    if proxy is cloth:
-        return None, 0, 0
-    proxy.name = f"{EFIT_PREFIX}Proxy"
-
-    # Strip all copied modifiers from the proxy (e.g. armature rigs)
-    # so its evaluated geometry matches its rest-pose mesh exactly.
-    for m in list(proxy.modifiers):
-        proxy.modifiers.remove(m)
-
-    current_tris  = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
-    subdiv_levels = _calc_subdivisions(current_tris, p.proxy_triangles)
-
-    if subdiv_levels > 0:
-        mod_sub = proxy.modifiers.new("_temp_subdiv", 'SUBSURF')
-        mod_sub.levels             = subdiv_levels
-        mod_sub.render_levels      = subdiv_levels
-        mod_sub.subdivision_type   = 'SIMPLE'
-
-        bpy.ops.object.select_all(action='DESELECT')
-        proxy.select_set(True)
-        context.view_layer.objects.active = proxy
-        bpy.ops.object.modifier_apply(modifier=mod_sub.name)
-
-    actual_tris = sum(max(0, len(f.vertices) - 2) for f in proxy.data.polygons)
-    return proxy, actual_tris, subdiv_levels
-
-
-def _efit_classify_vertices(cloth, p, has_preserve, preserve_name):
-    """Classify each clothing vertex as fitted or preserved.
-
-    Returns (fitted_indices, preserved_indices, has_preserve, preserve_name).
-    In EXCLUSIVE mode, has_preserve and preserve_name are forced to False/""
-    because the frozen vertices do not participate in the preserve-follow step.
-    """
-    preserved_indices = []
-    fitted_indices    = []
-
-    if p.fit_mode == 'EXCLUSIVE':
-        # In EVGF mode only the union of the listed exclusive groups is fitted.
-        # Everything else is frozen in place; no follow step is needed.
-        fitted_set = set()
-        for eg in p.exclusive_groups:
-            if not eg.group_name:
-                continue
-            vg = cloth.vertex_groups.get(eg.group_name)
-            if vg is None:
-                continue
-            for v in cloth.data.vertices:
-                try:
-                    if vg.weight(v.index) > 0.0:
-                        fitted_set.add(v.index)
-                except RuntimeError:
-                    pass
-        fitted_indices    = list(fitted_set)
-        preserved_indices = [v.index for v in cloth.data.vertices
-                             if v.index not in fitted_set]
-        has_preserve  = False
-        preserve_name = ""
-    elif has_preserve:
-        preserve_vg = cloth.vertex_groups[preserve_name]
-        for vi in range(len(cloth.data.vertices)):
-            try:
-                w = preserve_vg.weight(vi)
-            except RuntimeError:
-                w = 0.0
-            if w > 0.0:
-                preserved_indices.append(vi)
-            else:
-                fitted_indices.append(vi)
-    else:
-        fitted_indices = list(range(len(cloth.data.vertices)))
-
-    return fitted_indices, preserved_indices, has_preserve, preserve_name
-
-
-def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
-                           preserved_indices, has_preserve, p):
-    """Apply shrinkwrap to proxy and zero displacement near the preserve boundary.
-
-    The boundary zeroing step prevents deformation from bleeding into preserved regions
-    via BVH interpolation by nullifying proxy displacement for vertices topologically
-    closer to a preserved clothing vertex than to a fitted one.
-
-    Returns (proxy_pre, proxy_post).
-    """
-    proxy_pre = [v.co.copy() for v in proxy.data.vertices]
-
-    bpy.ops.object.select_all(action='DESELECT')
-    proxy.select_set(True)
-    context.view_layer.objects.active = proxy
-
-    mod_sw              = proxy.modifiers.new(f"{EFIT_PREFIX}Shrinkwrap", 'SHRINKWRAP')
-    mod_sw.target       = body
-    mod_sw.wrap_method  = 'NEAREST_SURFACEPOINT'
-    mod_sw.wrap_mode    = 'OUTSIDE_SURFACE'
-    mod_sw.offset       = p.offset
-
-    bpy.ops.object.modifier_apply(modifier=mod_sw.name)
-    proxy_post = [v.co.copy() for v in proxy.data.vertices]
-
-    # Zero out displacement for proxy vertices that are topologically closer
-    # to a preserved clothing vertex than a fitted one, so deformation does
-    # not bleed into the preserved region via BVH interpolation.
-    if has_preserve and preserved_indices:
-        kd_preserve = KDTree(len(preserved_indices))
-        for i, vi in enumerate(preserved_indices):
-            kd_preserve.insert(all_originals[vi], i)
-        kd_preserve.balance()
-
-        kd_fitted = KDTree(len(fitted_indices))
-        for i, vi in enumerate(fitted_indices):
-            kd_fitted.insert(all_originals[vi], i)
-        kd_fitted.balance()
-
-        for pi in range(len(proxy_pre)):
-            pos = proxy_pre[pi]
-            _, _, d_pres = kd_preserve.find(pos)
-            _, _, d_fit  = kd_fitted.find(pos)
-            if d_pres < d_fit:
-                proxy_post[pi] = proxy_pre[pi].copy()
-
-    return proxy_pre, proxy_post
-
-
-def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
-                                 fitted_indices, source_groups):
-    """Transfer shrinkwrap displacement from the proxy to the clothing via BVH interpolation.
-
-    The BVHTree is built from the proxy's PRE-shrinkwrap positions so each cloth vertex
-    maps to the topologically adjacent proxy face rather than a geometrically coincident
-    but topologically distant one (e.g. the opposite leg in a pants mesh).
-
-    Also caches the nearest body-surface normal per fitted vertex (used by the live preview
-    to apply offset changes without re-running shrinkwrap) and precomputes per-vertex weights
-    for offset influence groups.
-
-    Returns (cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj).
-    """
-    proxy_faces = [tuple(f.vertices) for f in proxy.data.polygons]
-    bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)
-    proxy_polys = proxy.data.polygons
-
-    # Compute per-fitted-vertex displacement via inverse-distance weighted
-    # barycentric interpolation from the three nearest proxy face vertices.
-    cloth_displacements = {}
-    for vi in fitted_indices:
-        v = cloth.data.vertices[vi]
-        loc, normal, face_idx, dist = bvh.find_nearest(v.co)
-
-        if face_idx is None:
-            cloth_displacements[vi] = mathutils.Vector((0.0, 0.0, 0.0))
-            continue
-
-        face = proxy_polys[face_idx]
-        fv   = list(face.vertices)
-
-        # Weight each proxy face vertex's displacement by 1/distance.
-        # 0.00001 floor avoids division-by-zero when positions coincide exactly.
-        weights = [1.0 / max((v.co - proxy_pre[fi]).length, 0.00001) for fi in fv]
-        w_sum   = sum(weights)
-
-        avg_disp = mathutils.Vector((0.0, 0.0, 0.0))
-        for fi, w in zip(fv, weights):
-            avg_disp += (proxy_post[fi] - proxy_pre[fi]) * (w / w_sum)
-
-        cloth_displacements[vi] = avg_disp
-
-    # Cache the nearest body-surface normal per fitted vertex.  The preview
-    # engine uses these to apply offset-slider changes live without re-running
-    # the full shrinkwrap.
-    body_faces   = [tuple(f.vertices) for f in body.data.polygons]
-    body_verts   = [v.co.copy() for v in body.data.vertices]
-    bvh_body     = BVHTree.FromPolygons(body_verts, body_faces)
-
-    cloth_body_normals = {}
-    for vi in fitted_indices:
-        v = cloth.data.vertices[vi]
-        loc, normal, face_idx, dist = bvh_body.find_nearest(v.co)
-        if normal is not None:
-            cloth_body_normals[vi] = normal.normalized()
-        else:
-            cloth_body_normals[vi] = mathutils.Vector((0.0, 0.0, 0.0))
-
-    # Precompute per-fitted-vertex weights for offset influence groups.
-    # In EVGF mode the exclusive groups carry their own influence sliders;
-    # in Full Mesh Fit mode the offset_groups list is used instead.
-    offset_group_weights = {}
-    for og in source_groups:
-        if not og.group_name:
-            continue
-        vg = cloth.vertex_groups.get(og.group_name)
-        if vg is None:
-            continue
-        og_weights = {}
-        for vi in fitted_indices:
-            try:
-                w = vg.weight(vi)
-            except RuntimeError:
-                w = 0.0
-            if w > 0.0:
-                og_weights[vi] = w
-        if og_weights:
-            offset_group_weights[og.group_name] = og_weights
-
-    # Build a fitted-only edge adjacency dict.  Edges that cross the
-    # preserve boundary are excluded so adaptive smoothing cannot bleed
-    # displacement into the preserved region.
-    fitted_set = set(fitted_indices)
-    cloth_adj  = {vi: [] for vi in fitted_indices}
-    for edge in cloth.data.edges:
-        a, b = edge.vertices
-        if a in fitted_set and b in fitted_set:
-            cloth_adj[a].append(b)
-            cloth_adj[b].append(a)
-
-    return cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj
-
-
-def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
-                          fitted_indices, fit, p):
-    """Apply adaptive displacement smoothing and write final vertex positions.
-
-    Smooths aggressively where the displacement field has sharp jumps (e.g. the
-    centerline crease between pant legs) and leaves smooth regions nearly untouched.
-    Each pass computes a per-vertex gradient (max displacement diff to edge neighbors);
-    vertices above the median-scaled threshold blend hard toward their neighbor average
-    while those below blend lightly.
-    """
-    smoothed       = {vi: cloth_displacements[vi].copy() for vi in fitted_indices}
-    ds_passes      = p.disp_smooth_passes
-    ds_thresh_mult = p.disp_smooth_threshold
-    ds_min         = p.disp_smooth_min
-    ds_max         = p.disp_smooth_max
-
-    # Each pass: compute per-vertex displacement gradient (max diff to edge neighbors).
-    # Vertices above median*threshold are blended hard toward neighbor average (ds_max);
-    # those below are blended lightly (ds_min).  Fixes creases in concave areas (e.g.
-    # between pant legs) while leaving smooth regions untouched.
-    for _pass in range(ds_passes):
-        gradient = {}
-        for vi in fitted_indices:
-            neighbors = cloth_adj[vi]
-            if not neighbors:
-                gradient[vi] = 0.0
-                continue
-            d        = smoothed[vi]
-            max_diff = 0.0
-            for ni in neighbors:
-                diff = (d - smoothed[ni]).length
-                if diff > max_diff:
-                    max_diff = diff
-            gradient[vi] = max_diff
-
-        grad_values = sorted(gradient.values())
-        median_grad = grad_values[len(grad_values) // 2] if grad_values else 0.0
-
-        new_smoothed = {}
-        for vi in fitted_indices:
-            neighbors = cloth_adj[vi]
-            if not neighbors:
-                new_smoothed[vi] = smoothed[vi].copy()
-                continue
-            g         = gradient[vi]
-            threshold = max(median_grad * ds_thresh_mult, 0.0001)
-            if g <= threshold:
-                blend = ds_min
-            else:
-                t     = min(1.0, (g - threshold) / max(threshold, 0.0001))
-                blend = ds_min + (ds_max - ds_min) * t
-            avg = mathutils.Vector((0.0, 0.0, 0.0))
-            for ni in neighbors:
-                avg += smoothed[ni]
-            avg /= len(neighbors)
-            new_smoothed[vi] = smoothed[vi] * (1.0 - blend) + avg * blend
-        smoothed = new_smoothed
-
-    for vi in fitted_indices:
-        cloth.data.vertices[vi].co = all_originals[vi] + smoothed[vi] * fit
-
-    cloth.data.update()
-
-
-def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
-                              source_groups, p):
-    """Apply per-group offset influence multipliers along cached body-surface normals.
-
-    A group influence of 100% is neutral (no change); 0% pulls the vertices flush to
-    the body surface; 200% doubles the gap.
-    """
-    base_offset = p.offset
-    for og in source_groups:
-        if not og.group_name:
-            continue
-        og_weights = offset_group_weights.get(og.group_name)
-        if not og_weights:
-            continue
-        # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)
-        mult_delta = og.influence / 100.0 - 1.0
-        if abs(mult_delta) < 0.0001:
-            continue
-        for vi, w in og_weights.items():
-            if vi in cloth_body_normals:
-                cloth.data.vertices[vi].co += (
-                    cloth_body_normals[vi] * (base_offset * mult_delta * w)
-                )
-    cloth.data.update()
-
-
-def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_indices,
-                                pre_offset_positions, p):
-    """Move preserved vertices to gently follow nearby fitted areas.
-
-    Builds a KDTree of fitted vertices in rest-pose space (stable across deformation),
-    then for each preserved vertex computes an inverse-distance-weighted average of
-    the K nearest fitted vertices' displacements and applies it scaled by follow_strength.
-    """
-    strength = p.follow_strength
-    if strength <= 0.0:
-        return
-
-    kd_follow = KDTree(len(fitted_indices))
-    for i, vi in enumerate(fitted_indices):
-        # Rest-pose coords keep neighbor lookup stable across deformation.
-        kd_follow.insert(all_originals[vi], i)
-    kd_follow.balance()
-
-    K_follow = min(p.follow_neighbors, len(fitted_indices))
-
-    for vi in preserved_indices:
-        rest_pos  = all_originals[vi]
-        neighbors = kd_follow.find_n(rest_pos, K_follow)
-
-        total_disp   = mathutils.Vector((0.0, 0.0, 0.0))
-        total_weight = 0.0
-
-        for co, idx, dist in neighbors:
-            ni    = fitted_indices[idx]
-            disp  = pre_offset_positions[ni] - all_originals[ni]
-            w     = 1.0 / max(dist, 0.0001)
-            total_disp   += disp * w
-            total_weight += w
-
-        if total_weight > 0.0:
-            avg_disp = total_disp / total_weight
-            cloth.data.vertices[vi].co = rest_pos + avg_disp * strength
-
-    cloth.data.update()
+from .pipeline import (
+    _efit_save_originals, _efit_create_proxy, _efit_classify_vertices,
+    _efit_shrinkwrap_proxy, _efit_transfer_displacements, _efit_apply_smoothing,
+    _efit_apply_offset_tuning, _efit_apply_preserve_follow,
+    _efit_create_hull_proxy,
+)
 
 
 class EFIT_OT_fit(Operator):
     bl_idname = "efit.fit"
     bl_label = "Fit Clothing"
-    bl_description = "Fit the clothing to the body mesh with a smooth, elastic result"
+    bl_description = "Fit the clothing to the body with a smooth, elastic result"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -421,7 +45,7 @@ class EFIT_OT_fit(Operator):
         if p.fit_mode == 'EXCLUSIVE':
             cloth = p.clothing_obj
             has_valid = any(
-                eg.group_name and cloth.vertex_groups.get(eg.group_name)
+                _resolve_vg_name(eg.group_name) and cloth.vertex_groups.get(_resolve_vg_name(eg.group_name))
                 for eg in p.exclusive_groups
             )
             if not has_valid:
@@ -437,6 +61,10 @@ class EFIT_OT_fit(Operator):
         cloth = p.clothing_obj
         body  = p.body_obj
 
+        # Expand the relevant settings panels so the user can review what was applied.
+        p.show_advanced      = True
+        p.show_fit_settings  = True
+
         # -- Validation --
         if not cloth or cloth.type != 'MESH':
             self.report({'ERROR'}, "Select a valid clothing mesh.")
@@ -446,6 +74,16 @@ class EFIT_OT_fit(Operator):
             return {'CANCELLED'}
         if cloth == body:
             self.report({'ERROR'}, "Clothing and body must be different objects.")
+            return {'CANCELLED'}
+        if cloth.name not in context.view_layer.objects:
+            self.report({'ERROR'},
+                        f"'{cloth.name}' is not in the active View Layer. "
+                        "Check that its collection is not excluded.")
+            return {'CANCELLED'}
+        if body.name not in context.view_layer.objects:
+            self.report({'ERROR'},
+                        f"'{body.name}' is not in the active View Layer. "
+                        "Check that its collection is not excluded.")
             return {'CANCELLED'}
 
         has_sk, blocker_mods = _has_blockers(cloth)
@@ -461,7 +99,7 @@ class EFIT_OT_fit(Operator):
 
         if p.fit_mode == 'EXCLUSIVE':
             valid_groups = [eg for eg in p.exclusive_groups
-                            if eg.group_name and cloth.vertex_groups.get(eg.group_name)]
+                            if _resolve_vg_name(eg.group_name) and cloth.vertex_groups.get(_resolve_vg_name(eg.group_name))]
             if not valid_groups:
                 self.report({'ERROR'},
                             "Exclusive Vertex Group Fit requires at least one group in the "
@@ -485,11 +123,11 @@ class EFIT_OT_fit(Operator):
                 del cloth["_efit_originals"]
             state._efit_originals.pop(cloth.name, None)
             for obj in list(bpy.data.objects):
-                if obj.name.startswith(f"{EFIT_PREFIX}Proxy"):
+                if obj.name.startswith(EFIT_PREFIX) and obj.type == 'MESH':
                     bpy.data.objects.remove(obj, do_unlink=True)
 
         # Resolve preserve group: check that the named vertex group actually exists.
-        preserve_name = (p.preserve_group or "").strip()
+        preserve_name = _resolve_vg_name(p.preserve_group)
         has_preserve  = bool(preserve_name and cloth.vertex_groups.get(preserve_name))
 
         if preserve_name and not cloth.vertex_groups.get(preserve_name):
@@ -513,23 +151,57 @@ class EFIT_OT_fit(Operator):
         fitted_indices, preserved_indices, has_preserve, preserve_name = \
             _efit_classify_vertices(cloth, p, has_preserve, preserve_name)
 
-        # -- Shrinkwrap proxy onto body --
+        # Cache the fitted set immediately — pipeline and state helpers read it
+        # back from the cache instead of rebuilding set(fitted_indices) each call.
+        state._efit_cache['fitted_set'] = set(fitted_indices)
+
+        # -- Optional: build a convex-hull proxy of the body as the shrinkwrap target.
+        # The hull fills concave regions (crotch, inner thigh) so the shrinkwrap
+        # cannot pull clothing vertices into cavities between legs. Disabled by
+        # default -- enable via the use_proxy_hull toggle in Fit Settings.
+        if p.use_proxy_hull:
+            hull_body = _efit_create_hull_proxy(context, body)
+            if hull_body is None:
+                self.report({'WARNING'}, "Could not create hull proxy, fitting against body directly.")
+                hull_body = body
+        else:
+            hull_body = body
+
+        # -- Shrinkwrap proxy onto body (or hull body) --
         proxy_pre, proxy_post = _efit_shrinkwrap_proxy(
-            context, proxy, body, all_originals,
+            context, proxy, hull_body, all_originals,
             fitted_indices, preserved_indices, has_preserve, p)
+
+        # Remove hull proxy immediately after shrinkwrap -- it is not needed downstream.
+        if p.use_proxy_hull and hull_body is not body:
+            bpy.data.objects.remove(hull_body, do_unlink=True)
+            hull_body = None
 
         # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        cloth_displacements, cloth_body_normals, offset_group_weights, cloth_adj = \
+        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, _proxy_bvh = \
             _efit_transfer_displacements(
                 cloth, proxy, proxy_pre, proxy_post, body, fitted_indices, source_groups)
 
         bpy.data.objects.remove(proxy, do_unlink=True)
 
+        # -- Proximity falloff weights (between steps 5 and 6) --
+        proximity_weights = None
+        if p.use_proximity_falloff:
+            if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
+                proximity_weights = state._compute_proximity_group_weights(
+                    cloth, p.proximity_groups, cloth_body_distances, fitted_indices,
+                    vg_membership=vg_membership)
+            else:
+                proximity_weights = state._compute_proximity_weights(
+                    cloth_body_distances, fitted_indices,
+                    p.proximity_start, p.proximity_end, p.proximity_curve)
+
         # -- Adaptive displacement smoothing --
         _efit_apply_smoothing(
             cloth, all_originals, cloth_displacements,
-            cloth_adj, fitted_indices, p.fit_amount, p)
+            cloth_adj, fitted_indices, p.fit_amount, p,
+            proximity_weights=proximity_weights)
 
         if saved_uvs:
             _restore_uvs(cloth.data, saved_uvs)
@@ -537,12 +209,25 @@ class EFIT_OT_fit(Operator):
         # Save each fitted vertex's position before any offset fine-tuning is applied.
         # The preserve group follow step reads from these saved positions, so offset
         # adjustments on fitted areas cannot unintentionally move nearby preserved vertices.
-        pre_offset_positions = {vi: cloth.data.vertices[vi].co.copy() for vi in fitted_indices}
+        # Only snapshot when needed -- skips an expensive per-vertex copy for users
+        # with no preserve group and no offset groups.
+        needs_pre_pos = bool(offset_group_weights) or (has_preserve and preserved_indices)
+        if needs_pre_pos:
+            _n    = len(cloth.data.vertices)
+            _snap = np.empty(_n * 3, dtype=np.float64)
+            cloth.data.vertices.foreach_get("co", _snap)
+            _snap_3 = _snap.reshape(-1, 3)
+            _fi_arr = np.array(fitted_indices, dtype=np.int32)
+            _pos_arr = _snap_3[_fi_arr]
+            pre_offset_positions = _pos_arr  # ndarray (N_fitted, 3), row i = fitted_indices[i]
+        else:
+            pre_offset_positions = np.empty((0, 3), dtype=np.float64)
 
         # -- Offset fine-tuning --
         if offset_group_weights:
             _efit_apply_offset_tuning(
-                cloth, cloth_body_normals, offset_group_weights, source_groups, p)
+                cloth, cloth_body_normals, offset_group_weights, source_groups, p,
+                fitted_indices=fitted_indices)
 
         # -- Move preserved vertices to follow nearby fitted areas --
         if has_preserve and preserved_indices and fitted_indices:
@@ -551,20 +236,71 @@ class EFIT_OT_fit(Operator):
                 preserved_indices, pre_offset_positions, p)
 
         # -- Populate preview cache (slider changes will re-apply from here) --
+        # Preserve fitted_set and KDTree entries that were written earlier in this
+        # execute() call — they are valid for the full preview lifetime and must
+        # survive the dict-replace below.
+        _kd_preserve = state._efit_cache.get('kd_preserve')
+        _kd_fitted   = state._efit_cache.get('kd_fitted')
+        _kd_follow   = state._efit_cache.get('kd_follow')
+        _fitted_set  = state._efit_cache.get('fitted_set', set(fitted_indices))
+
+        # Pre-build smoothing topology: vi_to_pos, src_rows, dst_rows, and
+        # smooth_degree are pure functions of fitted_indices and cloth_adj —
+        # both static for the entire preview session.  Computed once here so
+        # _apply_disp_smoothing never rebuilds them on slider ticks.
+        # smooth_degree replaces the per-vertex Python loop that previously
+        # rebuilt a neighbour-position list on every vertex of every pass.
+        _vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
+        _sm_src, _sm_dst = [], []
+        for _i, _vi in enumerate(fitted_indices):
+            for _ni in cloth_adj[_vi]:
+                _ni_pos = _vi_to_pos.get(_ni)
+                if _ni_pos is not None and _ni_pos > _i:
+                    _sm_src.append(_i)
+                    _sm_dst.append(_ni_pos)
+        _sm_src_arr = np.array(_sm_src, dtype=np.int32)
+        _sm_dst_arr = np.array(_sm_dst, dtype=np.int32)
+        # Degree array: count of fitted neighbours per vertex (for avg divisor).
+        _degree = np.zeros(len(fitted_indices), dtype=np.float64)
+        if len(_sm_src_arr):
+            np.add.at(_degree, _sm_src_arr, 1.0)
+            np.add.at(_degree, _sm_dst_arr, 1.0)
+        # Replace 0-degree entries with 1.0 so isolated vertices divide safely.
+        _smooth_degree   = np.where(_degree > 0.0, _degree, 1.0)
+        _smooth_has_nbrs = _degree > 0.0
+
         state._efit_cache = {
-            'cloth_name':          cloth.name,
-            'all_originals':       all_originals,
-            'cloth_displacements': cloth_displacements,
-            'cloth_adj':           cloth_adj,
-            'fitted_indices':      fitted_indices,
-            'preserved_indices':   preserved_indices,
-            'has_preserve':        has_preserve,
-            'preserve_name':       preserve_name,
-            'saved_uvs':           saved_uvs,
-            'cloth_body_normals':  cloth_body_normals,
-            'original_offset':     p.offset,
+            'cloth_name':           cloth.name,
+            'all_originals':        all_originals,
+            'cloth_displacements':  cloth_displacements,
+            'cloth_adj':            cloth_adj,
+            'fitted_indices':       fitted_indices,
+            'fitted_set':           _fitted_set,
+            'preserved_indices':    preserved_indices,
+            'has_preserve':         has_preserve,
+            'preserve_name':        preserve_name,
+            'saved_uvs':            saved_uvs,
+            'cloth_body_normals':   cloth_body_normals,
+            'cloth_body_distances': cloth_body_distances,
+            'proximity_weights':    proximity_weights,
+            'original_offset':      p.offset,
             'offset_group_weights': offset_group_weights,
+            'vg_membership':        vg_membership,
+            # Smoothing topology cache — static for the session lifetime.
+            # smooth_degree and smooth_has_nbrs enable fully-vectorised neighbour
+            # averaging, replacing the per-vertex Python loop in _apply_disp_smoothing.
+            'smooth_vi_to_pos':     _vi_to_pos,
+            'smooth_src_rows':      _sm_src_arr,
+            'smooth_dst_rows':      _sm_dst_arr,
+            'smooth_degree':        _smooth_degree,
+            'smooth_has_nbrs':      _smooth_has_nbrs,
         }
+        if _kd_preserve is not None:
+            state._efit_cache['kd_preserve'] = _kd_preserve
+        if _kd_fitted is not None:
+            state._efit_cache['kd_fitted'] = _kd_fitted
+        if _kd_follow is not None:
+            state._efit_cache['kd_follow'] = _kd_follow
 
         # Reselect clothing.
         bpy.ops.object.select_all(action='DESELECT')
@@ -584,7 +320,7 @@ class EFIT_OT_preview_apply(Operator):
     """Accept the current preview and finalize the fit."""
     bl_idname      = "efit.preview_apply"
     bl_label       = "Apply Fit"
-    bl_description = "Accept the current fit and apply any post-processing options"
+    bl_description = "Accept the current fit and finalize it"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -604,9 +340,6 @@ class EFIT_OT_preview_apply(Operator):
             state._efit_cache.clear()
             return {'CANCELLED'}
 
-        preserve_name     = c.get('preserve_name', '')
-        has_preserve      = c['has_preserve']
-        preserved_indices = c['preserved_indices']
         saved_uvs         = c.get('saved_uvs')
 
         if context.active_object and context.active_object.mode != 'OBJECT':
@@ -621,27 +354,6 @@ class EFIT_OT_preview_apply(Operator):
         if m_cs is not None:
             bpy.ops.object.modifier_apply(modifier=m_cs.name)
 
-        # Symmetrize: enter edit mode, select all non-preserved verts, run symmetrize.
-        if p.post_symmetrize:
-            bpy.ops.object.select_all(action='DESELECT')
-            cloth.select_set(True)
-            context.view_layer.objects.active = cloth
-            bpy.ops.object.mode_set(mode='EDIT')
-            import bmesh
-            bm = bmesh.from_edit_mesh(cloth.data)
-            bm.verts.ensure_lookup_table()
-            for v in bm.verts:
-                v.select = True
-            if has_preserve and preserved_indices:
-                pres_set = set(preserved_indices)
-                for v in bm.verts:
-                    if v.index in pres_set:
-                        v.select = False
-            bm.select_flush(True)
-            bmesh.update_edit_mesh(cloth.data)
-            bpy.ops.mesh.symmetrize(direction=p.symmetrize_axis)
-            bpy.ops.object.mode_set(mode='OBJECT')
-
         # Apply the laplacian smooth modifier if present.
         m_lap = cloth.modifiers.get(f"{EFIT_PREFIX}Laplacian")
         if m_lap is not None:
@@ -651,7 +363,9 @@ class EFIT_OT_preview_apply(Operator):
             _restore_uvs(cloth.data, saved_uvs)
 
         state._efit_cache.clear()
-        p.fit_mode = 'FULL'
+        p.fit_mode           = 'FULL'
+        p.use_exclusive_mode = False
+        p.ui_tab             = 'FULL'
 
         bpy.ops.object.select_all(action='DESELECT')
         cloth.select_set(True)
@@ -665,7 +379,7 @@ class EFIT_OT_preview_cancel(Operator):
     """Cancel the preview and restore the clothing to its original shape."""
     bl_idname      = "efit.preview_cancel"
     bl_label       = "Cancel Fit"
-    bl_description = "Discard the previewed fit and restore original mesh"
+    bl_description = "Throw away the current fit and restore the original clothing shape"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -684,23 +398,29 @@ class EFIT_OT_preview_cancel(Operator):
             self.report({'ERROR'}, "Clothing object no longer exists.")
             return {'CANCELLED'}
 
-        all_originals = c['all_originals']
-
         # Remove live preview modifiers before restoring vertex positions.
         for mod_name in (f"{EFIT_PREFIX}Smooth", f"{EFIT_PREFIX}Laplacian"):
             m = cloth.modifiers.get(mod_name)
             if m is not None:
                 cloth.modifiers.remove(m)
 
-        for vi, co in all_originals.items():
-            cloth.data.vertices[vi].co = co
+        flat = state._efit_originals.get(cloth.name)
+        if flat is not None:
+            cloth.data.vertices.foreach_set("co", np.asarray(flat, dtype=np.float64))
+        else:
+            all_originals = c['all_originals']
+            for vi, co in enumerate(all_originals):
+                cloth.data.vertices[vi].co = co
         cloth.data.update()
 
         state._efit_cache.clear()
         state._efit_originals.pop(cloth.name, None)
         if "_efit_originals" in cloth:
             del cloth["_efit_originals"]
-        context.scene.efit_props.fit_mode = 'FULL'
+        p = context.scene.efit_props
+        p.fit_mode           = 'FULL'
+        p.use_exclusive_mode = False
+        p.ui_tab             = 'FULL'
         self.report({'INFO'}, "Fit cancelled. Clothing restored.")
         return {'FINISHED'}
 
@@ -709,7 +429,7 @@ class EFIT_OT_remove(Operator):
     """Remove all fit data from the clothing."""
     bl_idname      = "efit.remove"
     bl_label       = "Remove Fit"
-    bl_description = "Remove all fit data from the clothing and restore it"
+    bl_description = "Remove all fit data and restore the clothing to its original shape"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -724,7 +444,7 @@ class EFIT_OT_remove(Operator):
         _remove_efit(cloth)
 
         for obj in list(bpy.data.objects):
-            if obj.name.startswith(f"{EFIT_PREFIX}Proxy"):
+            if obj.name.startswith(EFIT_PREFIX) and obj.type == 'MESH':
                 bpy.data.objects.remove(obj, do_unlink=True)
 
         self.report({'INFO'}, "Fit removed.")
@@ -735,7 +455,7 @@ class EFIT_OT_clear_blockers(Operator):
     """Remove shape keys and unapplied modifiers from the clothing."""
     bl_idname      = "efit.clear_blockers"
     bl_label       = "Clear Blockers"
-    bl_description = "Remove shape keys and unapplied modifiers from the clothing so it can be fitted"
+    bl_description = "Remove shape keys and extra modifiers from the clothing so it can be fitted"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -782,20 +502,31 @@ class EFIT_OT_reset_defaults(Operator):
     """Reset all Elastic Fit sliders to their default values."""
     bl_idname      = "efit.reset_defaults"
     bl_label       = "Reset Defaults"
-    bl_description = "Reset all sliders to their default values"
+    bl_description = "Reset all settings back to their defaults"
     bl_options     = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so slider resets cannot mutate
+        # mid-preview state and race with _efit_preview_update.
+        return not state._efit_cache
 
     def execute(self, context):
         p = context.scene.efit_props
         for prop_name in (
-            'fit_mode',
-            'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs',
+            'fit_mode', 'use_exclusive_mode', 'ui_tab',
+            'fit_amount', 'offset', 'proxy_triangles', 'preserve_uvs', 'use_proxy_hull',
             'smooth_factor', 'smooth_iterations',
-            'post_symmetrize', 'symmetrize_axis',
             'post_laplacian', 'laplacian_factor', 'laplacian_iterations',
             'follow_strength', 'cleanup',
             'disp_smooth_passes', 'disp_smooth_threshold',
             'disp_smooth_min', 'disp_smooth_max', 'follow_neighbors',
+            'use_proximity_falloff', 'proximity_mode',
+            'proximity_start', 'proximity_end', 'proximity_curve',
+            'use_proximity_group_tuning',
+            'show_fit_settings', 'show_shape_preservation', 'show_preserve_group',
+            'show_displacement_smoothing',
+            'show_offset_fine_tuning', 'show_misc',
         ):
             p.property_unset(prop_name)
         if state._efit_cache:
@@ -808,8 +539,14 @@ class EFIT_OT_offset_group_add(Operator):
     """Add a new vertex group offset entry."""
     bl_idname      = "efit.offset_group_add"
     bl_label       = "Add Offset Group"
-    bl_description = "Add a vertex group whose offset influence can be fine-tuned"
+    bl_description = "Add a vertex group to adjust its offset separately"
     bl_options     = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so the offset group list cannot
+        # change mid-fit and cause stale weight lookups.
+        return not state._efit_cache
 
     def execute(self, context):
         item           = context.scene.efit_props.offset_groups.add()
@@ -821,7 +558,7 @@ class EFIT_OT_offset_group_remove(Operator):
     """Remove the offset group entry at the given list index."""
     bl_idname      = "efit.offset_group_remove"
     bl_label       = "Remove Offset Group"
-    bl_description = "Remove this vertex group offset entry"
+    bl_description = "Remove this offset group entry"
     bl_options     = {'REGISTER', 'UNDO'}
 
     index: IntProperty()
@@ -835,11 +572,48 @@ class EFIT_OT_offset_group_remove(Operator):
         return {'FINISHED'}
 
 
+class EFIT_OT_proximity_group_add(Operator):
+    """Add a new per-group proximity falloff entry."""
+    bl_idname      = "efit.proximity_group_add"
+    bl_label       = "Add Proximity Group"
+    bl_description = "Add a vertex group with its own proximity falloff"
+    bl_options     = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Disabled during an active preview so the proximity group list cannot
+        # change mid-fit and cause stale weight lookups.
+        return not state._efit_cache
+
+    def execute(self, context):
+        context.scene.efit_props.proximity_groups.add()
+        return {'FINISHED'}
+
+
+class EFIT_OT_proximity_group_remove(Operator):
+    """Remove the proximity group entry at the given list index."""
+    bl_idname      = "efit.proximity_group_remove"
+    bl_label       = "Remove Proximity Group"
+    bl_description = "Remove this proximity falloff entry"
+    bl_options     = {'REGISTER', 'UNDO'}
+
+    index: IntProperty()
+
+    def execute(self, context):
+        groups = context.scene.efit_props.proximity_groups
+        if 0 <= self.index < len(groups):
+            groups.remove(self.index)
+            if state._efit_cache:
+                from .preview import _efit_preview_update as _preview_update
+                _preview_update(context)
+        return {'FINISHED'}
+
+
 class EFIT_OT_exclusive_group_add(Operator):
     """Add a vertex group to the Exclusive Vertex Group Fit list."""
     bl_idname      = "efit.exclusive_group_add"
     bl_label       = "Add Exclusive Group"
-    bl_description = "Add a vertex group to fit exclusively"
+    bl_description = "Add a vertex group to the exclusive fit list"
     bl_options     = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -856,7 +630,7 @@ class EFIT_OT_exclusive_group_remove(Operator):
     """Remove a vertex group entry from the Exclusive Vertex Group Fit list."""
     bl_idname      = "efit.exclusive_group_remove"
     bl_label       = "Remove Exclusive Group"
-    bl_description = "Remove this vertex group from the exclusive fit list"
+    bl_description = "Remove this group from the exclusive fit list"
     bl_options     = {'REGISTER', 'UNDO'}
 
     index: IntProperty()
@@ -880,7 +654,7 @@ class EFIT_OT_check_update(Operator):
     """Check GitHub for a newer release of Elastic Clothing Fit."""
     bl_idname      = "efit.check_update"
     bl_label       = "Check for Updates"
-    bl_description = "Query the GitHub releases API to see if a newer version is available"
+    bl_description = "Check online for a newer version of the addon"
     bl_options     = {'REGISTER'}
 
     @classmethod
@@ -897,12 +671,12 @@ class EFIT_OT_download_update(Operator):
     """Download the latest release zip in the background."""
     bl_idname      = "efit.download_update"
     bl_label       = "Download Update"
-    bl_description = "Download the latest release zip file in the background"
+    bl_description = "Download the update in the background"
     bl_options     = {'REGISTER'}
 
     @classmethod
     def poll(cls, context):
-        return updater.get_state()['status'] == 'available'
+        return updater.get_status() == 'available'
 
     def execute(self, context):
         updater.download_and_prepare()
@@ -913,12 +687,12 @@ class EFIT_OT_install_restart(Operator):
     """Write the install startup script and relaunch Blender."""
     bl_idname      = "efit.install_restart"
     bl_label       = "Restart and Install"
-    bl_description = "Save if requested, write an auto-install script, and relaunch Blender"
+    bl_description = "Save your work (if selected), install the update, and restart Blender"
     bl_options     = {'REGISTER'}
 
     @classmethod
     def poll(cls, context):
-        return updater.get_state()['status'] == 'ready'
+        return updater.get_status() == 'ready'
 
     def execute(self, context):
         p = context.scene.efit_props
@@ -929,20 +703,4 @@ class EFIT_OT_install_restart(Operator):
         return {'FINISHED'}
 
 
-class EFIT_OT_browse_local_zip(Operator):
-    """Open a file browser to choose a local zip for dev-mode installs."""
-    bl_idname      = "efit.browse_local_zip"
-    bl_label       = "Browse for Zip"
-    bl_description = "Choose a local zip file to use for dev-mode installation testing"
-    bl_options     = {'REGISTER'}
 
-    filepath: StringProperty(subtype='FILE_PATH')
-    filter_glob: StringProperty(default="*.zip", options={'HIDDEN'})
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {'RUNNING_MODAL'}
-
-    def execute(self, context):
-        context.scene.efit_props.dev_local_zip = self.filepath
-        return {'FINISHED'}

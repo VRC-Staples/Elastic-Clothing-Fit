@@ -1,0 +1,9 @@
+# Files excluded from git archive exports (GitHub "Download ZIP", release source tarballs).
+# These paths are development-only and must not appear in the distributed source archive.
+# They ARE present in the repo and ARE checked out by CI (actions/checkout is a full clone).
+tools    export-ignore
+tools/**  export-ignore
+tests    export-ignore
+tests/**  export-ignore
+*.blend  export-ignore
+*.blend1 export-ignore
