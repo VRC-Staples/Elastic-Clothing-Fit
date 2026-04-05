@@ -498,18 +498,6 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     if strength <= 0.0:
         return
 
-    # Lazily build and cache the KDTree on first call.
-    # Rest-pose positions are used so neighbor selection stays stable
-    # as the mesh deforms across slider changes.
-    kd_follow = state._efit_cache.get('kd_follow')
-    if kd_follow is None:
-        kd_follow = KDTree(len(fitted_indices))
-        for i, vi in enumerate(fitted_indices):
-            # Rest-pose coords keep neighbor lookup stable across deformation.
-            kd_follow.insert(all_originals[vi], i)
-        kd_follow.balance()
-        state._efit_cache['kd_follow'] = kd_follow
-
     K_follow = min(p.follow_neighbors, len(fitted_indices))
 
     n_verts = len(cloth.data.vertices)
@@ -525,7 +513,8 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
         # --- Fast path: pykdtree batch query ---
         # Build/reuse a pykdtree from rest-pose fitted positions (float32).
         kd_follow = state._efit_cache.get('kd_follow')
-        if kd_follow is None:
+        # Guard against stale mathutils KDTree from older sessions.
+        if kd_follow is None or not isinstance(kd_follow, deps.BatchKDTree):
             fitted_rest = all_originals[fi_arr].astype(np.float32)
             kd_follow = deps.BatchKDTree(fitted_rest)
             state._efit_cache['kd_follow'] = kd_follow
@@ -553,7 +542,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     else:
         # --- Fallback path: sequential mathutils.KDTree ---
         kd_follow = state._efit_cache.get('kd_follow')
-        if kd_follow is None:
+        if kd_follow is None or not isinstance(kd_follow, KDTree):
             kd_follow = KDTree(len(fitted_indices))
             for i, vi in enumerate(fitted_indices):
                 kd_follow.insert(all_originals[vi], i)
