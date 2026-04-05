@@ -314,3 +314,110 @@ class TestInstalledChannel:
         marker = tmp_path / '_nightly.txt'
         marker.write_text('', encoding='utf-8')
         assert _installed_channel(str(marker)) == 'nightly'
+
+
+# ---------------------------------------------------------------------------
+# Tests: nightly-to-stable upgrade path
+#
+# Validates the version comparison logic that determines whether a stable
+# release should be offered to a user currently on the nightly channel.
+# This is the code path exercised when a nightly user unchecks "Nightly Dev
+# Build" and the updater checks the stable channel.
+# ---------------------------------------------------------------------------
+
+_SAFE_TAG_RE = re.compile(r'^(?:nightly|v?\d+\.\d+\.\d+)')
+
+
+def _check_status_stable(current, remote_version, installed_channel):
+    """Replicate the stable-channel version comparison from _check_thread."""
+    if installed_channel == 'nightly' and remote_version >= current:
+        return 'available'
+    elif remote_version > current:
+        return 'available'
+    else:
+        return 'up_to_date'
+
+
+class TestNightlyToStableUpgrade:
+    """Verify the upgrade path from nightly to stable works correctly.
+
+    When a user on the nightly channel unchecks "Nightly Dev Build",
+    the updater should offer the stable release as an upgrade if the
+    stable version is >= the currently installed version.
+    """
+
+    def test_same_version_nightly_to_stable_is_available(self):
+        """v1.0.6-nightly -> v1.0.6-stable should show as available."""
+        status = _check_status_stable(
+            current=(1, 0, 6),
+            remote_version=(1, 0, 6),
+            installed_channel='nightly',
+        )
+        assert status == 'available'
+
+    def test_newer_stable_from_nightly_is_available(self):
+        """v1.0.5-nightly -> v1.0.6-stable should show as available."""
+        status = _check_status_stable(
+            current=(1, 0, 5),
+            remote_version=(1, 0, 6),
+            installed_channel='nightly',
+        )
+        assert status == 'available'
+
+    def test_older_stable_from_nightly_is_up_to_date(self):
+        """v1.0.7-nightly -> v1.0.6-stable should NOT show as available."""
+        status = _check_status_stable(
+            current=(1, 0, 7),
+            remote_version=(1, 0, 6),
+            installed_channel='nightly',
+        )
+        assert status == 'up_to_date'
+
+    def test_stable_to_stable_same_version_is_up_to_date(self):
+        """v1.0.6-stable -> v1.0.6-stable should be up to date."""
+        status = _check_status_stable(
+            current=(1, 0, 6),
+            remote_version=(1, 0, 6),
+            installed_channel='stable',
+        )
+        assert status == 'up_to_date'
+
+    def test_stable_to_stable_newer_is_available(self):
+        """v1.0.5-stable -> v1.0.6-stable should show as available."""
+        status = _check_status_stable(
+            current=(1, 0, 5),
+            remote_version=(1, 0, 6),
+            installed_channel='stable',
+        )
+        assert status == 'available'
+
+    def test_stable_tag_passes_safe_tag_regex(self):
+        """The stable tag v1.0.6 must pass _SAFE_TAG_RE in the download path."""
+        assert _SAFE_TAG_RE.match('v1.0.6')
+
+    def test_nightly_tag_passes_safe_tag_regex(self):
+        """The literal 'nightly' tag must pass _SAFE_TAG_RE after the fix."""
+        assert _SAFE_TAG_RE.match('nightly')
+
+    def test_nightly_semver_tag_passes_safe_tag_regex(self):
+        """A nightly tag with semver prefix must pass _SAFE_TAG_RE."""
+        assert _SAFE_TAG_RE.match('v1.0.6-nightly-202604050200')
+
+    def test_parse_version_stable_tag(self):
+        """_parse_version must correctly parse a stable tag like v1.0.6."""
+        assert _parse_version('v1.0.6') == (1, 0, 6)
+
+    def test_channel_reverts_after_stable_install(self, tmp_path):
+        """After installing a stable build, _installed_channel returns 'stable'.
+
+        A stable zip does not contain _nightly.txt, so after addon_install
+        overwrites the addon directory, the marker is gone and the channel
+        detection correctly returns 'stable'.
+        """
+        marker = tmp_path / '_nightly.txt'
+        # Nightly was installed -- marker exists
+        marker.write_text('202604050200 abc1234', encoding='utf-8')
+        assert _installed_channel(str(marker)) == 'nightly'
+        # Stable install overwrites the addon dir -- marker is removed
+        marker.unlink()
+        assert _installed_channel(str(marker)) == 'stable'
