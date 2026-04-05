@@ -1,5 +1,23 @@
 # Patch Notes
 
+## v1.0.6
+
+### Bug fixes
+
+- **Nightly update channel: invalid tag format error.** Users on the nightly channel who clicked "Try Again" saw "Error: Invalid tag format" because the tag validation regex (`_SAFE_TAG_RE`) only accepted semver tags like `v1.0.5` and rejected the literal `nightly` tag used by the nightly release channel. The regex now accepts both forms.
+- **Preserve-follow crash with pykdtree installed.** When the bundled pykdtree wheel was available, the preserve-follow step crashed with `AttributeError: 'KDTree' object has no attribute 'query'`. The fast path now always constructs a pykdtree `BatchKDTree` when `deps.PYKDTREE_AVAILABLE` is true, and isolates the Blender `mathutils.KDTree` to the fallback path only.
+
+### Upgrade path from nightly to stable
+
+Users currently on a nightly build who hit the "Invalid tag format" error can update cleanly:
+
+1. Uncheck **"Nightly Dev Build"** in the Update tab
+2. Click **Try Again**
+3. v1.0.6 is offered through the stable channel, downloads and installs automatically
+4. Re-enable **"Nightly Dev Build"** if desired — the fixed tag validation handles future nightly updates correctly
+
+---
+
 ## v1.0.5
 
 ### 3-tab panel layout

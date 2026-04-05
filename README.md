@@ -32,7 +32,7 @@ For developer documentation, see the [Wiki](../../wiki).
 - **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, proximity falloff, and follow parameters under Advanced Settings. Preserve-follow is accelerated with a pykdtree-backed KDTree when available, and automatically falls back to Blender's KDTree on platforms where pykdtree is not installed.
 - **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
-- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.
+- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs. Supports a nightly dev channel (toggle in the Update tab under Developer Mode) with automatic fallback to stable if needed.
 - **Mesh and armature tools.** Utilities for splitting meshes (by loose parts, material, or vertex group), joining meshes, displaying armature settings, and merging armature hierarchies.
 
 ## Installation
