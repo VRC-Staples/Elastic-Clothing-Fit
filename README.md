@@ -29,7 +29,7 @@ For developer documentation, see the [Wiki](../../wiki).
 - **Post-fit options.** Optional shape correction and extra smoothing applied on finalize.
 - **Offset fine-tuning.** Per-vertex-group offset overrides (0-1000%) for precise local control of the body gap.
 - **Hull Fit.** Optional convex-hull proxy of the body fills concave regions (crotch, inner thigh, armpits) so clothing conforms to the body center instead of being pulled toward individual limbs.
-- **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, proximity falloff, and follow parameters under Advanced Settings.
+- **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, proximity falloff, and follow parameters under Advanced Settings. Preserve-follow is accelerated with a pykdtree-backed KDTree when available, and automatically falls back to Blender's KDTree on platforms where pykdtree is not installed.
 - **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
 - **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.

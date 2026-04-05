@@ -259,3 +259,60 @@ class TestPreOffsetPositionsNdarray:
             "_efit_apply_preserve_follow still contains 'pre_offset_positions[ni]'.  "
             "The old vertex-index dict lookup has not been replaced."
         )
+
+
+# ===========================================================================
+# TestPreserveFollowPykdtreeFastPath
+#
+# Guards the KDTree cache semantics for the pykdtree fast path.  The bug fixed
+# in dev incorrectly seeded state._efit_cache['kd_follow'] with a mathutils
+# KDTree before the deps.PYKDTREE_AVAILABLE fast-path branch, so kd_follow.query
+# was called on the wrong type.  These source-based tests ensure the fast path
+# owns KDTree construction when pykdtree is available and that the fallback
+# path is the only place that builds the mathutils KDTree.
+# ===========================================================================
+
+class TestPreserveFollowPykdtreeFastPath:
+
+    def _func_source(self) -> str:
+        src = _load("elastic_fit/pipeline.py")
+        body = _get_func_source(src, "_efit_apply_preserve_follow")
+        assert body, "_efit_apply_preserve_follow source not extractable"
+        return body
+
+    def test_no_unconditional_kdtree_seed(self):
+        """_efit_apply_preserve_follow must not unconditionally build KDTree at top.
+
+        The old bug path created a mathutils KDTree and cached it under
+        state._efit_cache['kd_follow'] before checking deps.PYKDTREE_AVAILABLE.
+        This allowed the fast path to call .query() on a mathutils KDTree.
+        """
+        body = self._func_source()
+        assert "Lazily build and cache the KDTree on first call." not in body, (
+            "_efit_apply_preserve_follow still contains the unconditional KDTree "
+            "seed comment.  The pykdtree fast path may be reusing a mathutils KDTree."
+        )
+
+    def test_fast_and_fallback_branches_have_type_guards(self):
+        """Fast path uses BatchKDTree, fallback uses mathutils KDTree.
+
+        We rely on explicit isinstance guards to ensure the fast path replaces
+        any stale mathutils KDTree in the cache when deps.PYKDTREE_AVAILABLE is
+        true, and that the fallback path only builds KDTree when pykdtree is
+        unavailable.
+        """
+        body = self._func_source()
+        assert "if deps.PYKDTREE_AVAILABLE" in body, (
+            "_efit_apply_preserve_follow no longer has a deps.PYKDTREE_AVAILABLE "
+            "branch.  The pykdtree fast path has been removed or renamed."
+        )
+        assert "isinstance(kd_follow, deps.BatchKDTree)" in body, (
+            "Fast path in _efit_apply_preserve_follow does not contain an "
+            "isinstance(kd_follow, deps.BatchKDTree) guard.  It may reuse a "
+            "mathutils KDTree when pykdtree is available."
+        )
+        assert "isinstance(kd_follow, KDTree)" in body, (
+            "Fallback path in _efit_apply_preserve_follow does not guard "
+            "kd_follow with isinstance(kd_follow, KDTree).  The mathutils "
+            "KDTree construction may not be isolated to the fallback."
+        )
