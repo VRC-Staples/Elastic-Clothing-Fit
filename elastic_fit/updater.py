@@ -160,8 +160,9 @@ _SHA256_RE = re.compile(r'\bSHA256:\s*([0-9a-fA-F]{64})\b')
 
 # Security constants
 # Validates tag_name before it is spliced into a filesystem path.
-# Anchored at the start; allows semver suffixes like '-nightly-20240321'.
-_SAFE_TAG_RE = re.compile(r'^v?\d+\.\d+\.\d+')
+# Accepts semver tags (v1.0.5, 1.0.5-nightly-20240321) and the literal
+# 'nightly' tag used by the nightly release channel.
+_SAFE_TAG_RE = re.compile(r'^(?:nightly|v?\d+\.\d+\.\d+)')
 
 # Maximum bytes accepted from a release zip download (50 MB).
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024

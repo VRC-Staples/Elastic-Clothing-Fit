@@ -31,7 +31,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 # Security constants — must match updater.py exactly.
-_SAFE_TAG_RE = re.compile(r'^v?\d+\.\d+\.\d+')
+_SAFE_TAG_RE = re.compile(r'^(?:nightly|v?\d+\.\d+\.\d+)')
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024       # 50 MB
 MAX_JSON_BYTES     = 1 * 1024 * 1024        # 1 MB
 
@@ -129,8 +129,15 @@ class TestSafeTagRe:
         """Pattern requires at least X.Y.Z — two-part tags do not match."""
         assert not _SAFE_TAG_RE.match('v1.0')
 
-    def test_nightly_keyword_only_rejected(self):
-        assert not _SAFE_TAG_RE.match('nightly')
+    def test_nightly_keyword_accepted(self):
+        """The literal 'nightly' tag is used by the nightly release channel
+        and must pass the safe-tag check so downloads are not blocked."""
+        assert _SAFE_TAG_RE.match('nightly')
+
+    def test_nightly_prefix_variants_rejected(self):
+        """Only the exact word 'nightly' is valid — arbitrary prefixes are not."""
+        assert not _SAFE_TAG_RE.match('xnightly')
+        assert not _SAFE_TAG_RE.match('not-nightly')
 
 
 # ---------------------------------------------------------------------------
