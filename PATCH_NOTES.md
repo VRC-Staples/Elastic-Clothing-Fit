@@ -4,6 +4,7 @@
 
 ### Bug fixes
 
+- **Crash on certain CATS-imported FBX clothing meshes.** Fitting some imported garments crashed Blender (`EXCEPTION_ACCESS_VIOLATION` inside `C_BVHTree_FromPolygons`) with no Python traceback. The proxy build now runs `Mesh.validate()` after subdivision to repair corrupt geometry, verifies shrinkwrap output (vertex count stability and finite coordinates), preflights all proxy face indices against the vertex count, and wraps both `BVHTree.FromPolygons()` calls in try/except. Invalid geometry now produces a readable operator error instead of crashing Blender. Reproduced on Blender 4.0.2.
 - **Nightly update channel: invalid tag format error.** Users on the nightly channel who clicked "Try Again" saw "Error: Invalid tag format" because the tag validation regex (`_SAFE_TAG_RE`) only accepted semver tags like `v1.0.5` and rejected the literal `nightly` tag used by the nightly release channel. The regex now accepts both forms.
 - **Preserve-follow crash with pykdtree installed.** When the bundled pykdtree wheel was available, the preserve-follow step crashed with `AttributeError: 'KDTree' object has no attribute 'query'`. The fast path now always constructs a pykdtree `BatchKDTree` when `deps.PYKDTREE_AVAILABLE` is true, and isolates the Blender `mathutils.KDTree` to the fallback path only.
 
