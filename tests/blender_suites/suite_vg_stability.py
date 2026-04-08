@@ -19,23 +19,34 @@
 import sys
 import os
 
+sys.path.insert(0, os.path.dirname(__file__))
+from _programmatic_geometry import (
+    clear_programmatic_objects,
+    make_clothing_with_groups,
+    make_icosphere,
+)
+
 # ---- parse CLI args ----
 _argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 _blend_root = None
+_programmatic = False
 _i = 0
 while _i < len(_argv):
     if _argv[_i] == "--blend-root" and _i + 1 < len(_argv):
         _blend_root = _argv[_i + 1]
         _i += 2
+    elif _argv[_i] == "--programmatic":
+        _programmatic = True
+        _i += 1
     else:
         _i += 1
 
-if _blend_root is None:
-    print("[ERROR] --blend-root <repo_root> is required")
+if _blend_root is None and not _programmatic:
+    print("[ERROR] --blend-root <repo_root> is required (unless --programmatic is set)")
     sys.exit(1)
 
-BLEND_PATH    = os.path.join(_blend_root, "tests", "ECF_Test3.blend")
-BODY_NAME     = "Body"
+BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test3.blend") if _blend_root else None
+BODY_NAME = "Body"
 CLOTHING_NAME = "Outfit"
 
 # ---- failure counter ----
@@ -69,17 +80,29 @@ import bpy
 # STEP 1: Load scene and set clothing/body pickers
 # ============================================================
 print("\n=== STEP 1: Load blend file and set mesh pickers ===")
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
-_assert_true(BODY_NAME     in bpy.data.objects, f"{BODY_NAME!r} exists in scene")
-_assert_true(CLOTHING_NAME in bpy.data.objects, f"{CLOTHING_NAME!r} exists in scene")
+if _programmatic:
+    clear_programmatic_objects()
+    body = make_icosphere("ECF_Body", radius=1.0)
+    cloth_obj = make_clothing_with_groups(
+        "ECF_Clothing",
+        radius=1.1,
+        group_names=("StableGroupA", "StableGroupB"),
+    )
+    print("[INFO] programmatic geometry: ECF_Body, ECF_Clothing")
+else:
+    bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+    cloth_obj = bpy.data.objects[CLOTHING_NAME]
+    body = bpy.data.objects[BODY_NAME]
 
-p          = bpy.context.scene.efit_props
-cloth_obj  = bpy.data.objects[CLOTHING_NAME]
-p.body_obj     = bpy.data.objects[BODY_NAME]
+_assert_true(body.name in bpy.data.objects, f"{body.name!r} exists in scene")
+_assert_true(cloth_obj.name in bpy.data.objects, f"{cloth_obj.name!r} exists in scene")
+
+p = bpy.context.scene.efit_props
+p.body_obj = body
 p.clothing_obj = cloth_obj
 
-_assert_equal(p.body_obj.name,     BODY_NAME,     "body_obj set")
-_assert_equal(p.clothing_obj.name, CLOTHING_NAME, "clothing_obj set")
+_assert_equal(p.body_obj.name, body.name, "body_obj set")
+_assert_equal(p.clothing_obj.name, cloth_obj.name, "clothing_obj set")
 
 # ---- discover two real vertex groups to use as anchors ----
 vg_names = [vg.name for vg in cloth_obj.vertex_groups]
