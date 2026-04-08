@@ -14,11 +14,20 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-
-    env:
-      BLENDER_VERSION: "5.1.0"
-      BLENDER_DIR: "blender-5.1.0-linux-x64"
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - blender_version: '3.6.23'
+            blender_dir: 'blender-3.6.23-linux-x64'
+            blender_series: 'Blender3.6'
+          - blender_version: '4.2.19'
+            blender_dir: 'blender-4.2.19-linux-x64'
+            blender_series: 'Blender4.2'
+          - blender_version: '5.1.0'
+            blender_dir: 'blender-5.1.0-linux-x64'
+            blender_series: 'Blender5.1'
 
     steps:
       - name: Checkout
@@ -38,7 +47,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dev tools
         run: pip install ruff pytest
@@ -49,6 +58,9 @@ jobs:
       - name: Pytest
         run: pytest tests/
 
+      - name: Static analysis — updater thread safety
+        run: python tests/verify_updater.py
+
       - name: Determine release tag
         id: tag
         run: |
@@ -58,57 +70,99 @@ jobs:
             echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate release tag against bl_info.version
+        run: python tools/deploy.py verify-tag --tag "${{ steps.tag.outputs.TAG }}"
+
       - name: Cache Blender
         id: cache-blender
         uses: actions/cache@v4
         with:
           path: ~/blender-cache
-          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+          key: blender-${{ matrix.blender_version }}-linux-x64
 
       - name: Download Blender
         if: steps.cache-blender.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/blender-cache
           cd ~/blender-cache
-          curl -L -O "https://download.blender.org/release/Blender5.1/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
-          tar -xJf "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
-          rm "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          curl -L -O "https://download.blender.org/release/${{ matrix.blender_series }}/blender-${{ matrix.blender_version }}-linux-x64.tar.xz"
+          tar -xJf "blender-${{ matrix.blender_version }}-linux-x64.tar.xz"
+          rm "blender-${{ matrix.blender_version }}-linux-x64.tar.xz"
 
       - name: Install xvfb
         run: sudo apt-get install -y xvfb
 
       - name: Build and test
         run: |
-          BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
+          BLENDER_BIN="$HOME/blender-cache/${{ matrix.blender_dir }}/blender"
           xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
 
-      - name: Static analysis — updater thread safety
-        run: python tests/verify_updater.py
+      - name: Upload release zip artifact (single publisher lane)
+        if: matrix.blender_version == '5.1.0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ElasticClothingFit-v*.zip
+          if-no-files-found: error
 
-      - name: Read bl_info version and compute SHA-256
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: [release]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # tools/ and tests/ live on dev, not on main.
+      # Tags may point to main, so we restore these directories explicitly
+      # rather than relying on them being present in the checked-out tree.
+      - name: Restore dev tooling from dev
+        run: |
+          git fetch origin dev
+          git checkout origin/dev -- tools/ tests/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate release tag against bl_info.version
+        run: python tools/deploy.py verify-tag --tag "${{ steps.tag.outputs.TAG }}"
+
+      - name: Download release zip artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: .
+
+      - name: Verify release artifact exists
+        run: |
+          ZIP=$(ls ElasticClothingFit-v*.zip | grep -v nightly | head -1 || true)
+          if [ -z "$ZIP" ]; then
+            echo "Expected stable release zip artifact was not downloaded." >&2
+            exit 1
+          fi
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Read bl_info metadata and compute SHA-256
         id: meta
         run: |
-          # Extract the minimum Blender version from bl_info (canonical source)
-          BLENDER_MIN=$(python - <<'EOF'
-          import ast, sys
-          with open("elastic_fit/__init__.py") as f:
-              src = f.read()
-          tree = ast.parse(src)
-          for node in ast.walk(tree):
-              if isinstance(node, ast.Assign):
-                  for t in node.targets:
-                      if isinstance(t, ast.Name) and t.id == "bl_info":
-                          d = ast.literal_eval(node.value)
-                          v = d.get("blender", (3, 2, 0))
-                          print(".".join(str(x) for x in v))
-                          sys.exit(0)
-          print("3.2.0")
-          EOF
-          )
-          ZIP=$(ls ElasticClothingFit-v*.zip | grep -v nightly | head -1)
+          BLENDER_MIN=$(python tools/deploy.py meta --field blender-min)
           SHA=$(sha256sum "$ZIP" | awk '{print $1}')
           echo "BLENDER_MIN=$BLENDER_MIN" >> "$GITHUB_OUTPUT"
-          echo "ZIP=$ZIP"                 >> "$GITHUB_OUTPUT"
           echo "SHA256=$SHA"              >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
@@ -116,7 +170,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.TAG }}"
-          ZIP="${{ steps.meta.outputs.ZIP }}"
           BLENDER_MIN="${{ steps.meta.outputs.BLENDER_MIN }}"
           SHA256="${{ steps.meta.outputs.SHA256 }}"
 

@@ -6,6 +6,7 @@ Usage:
     python tools/deploy.py build [--blender <exe>] [--skip-test]
     python tools/deploy.py select [--zip <path>] [--blender <exe>] [--skip-test]
     python tools/deploy.py meta --field {version,blender-min}
+    python tools/deploy.py verify-tag --tag <vX.Y.Z>
 """
 import argparse
 import datetime
@@ -84,6 +85,9 @@ def _read_blender_min(init_path=None):
     return f"{major}.{minor}.{patch}"
 
 
+_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+
+
 def _parse_results(stdout):
     """Parse [PASS] / [FAIL] lines from captured Blender stdout."""
     passed = []
@@ -95,6 +99,24 @@ def _parse_results(stdout):
         elif "[FAIL]" in s:
             failed.append(s)
     return {"passed": passed, "failed": failed}
+
+
+def _expected_release_tag(init_path=None):
+    """Return the canonical stable release tag string (e.g. v1.2.3)."""
+    return f"v{_read_version(init_path=init_path)}"
+
+
+def _validate_release_tag(tag, init_path=None):
+    """Validate a stable release tag against bl_info.version.
+
+    Returns (ok, expected_tag, message).
+    """
+    expected = _expected_release_tag(init_path=init_path)
+    if not _TAG_RE.fullmatch(tag or ""):
+        return False, expected, f"Tag '{tag}' is malformed; expected format vX.Y.Z"
+    if tag != expected:
+        return False, expected, f"Tag '{tag}' does not match addon version '{expected}'"
+    return True, expected, f"Tag '{tag}' matches addon version '{expected}'"
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +480,16 @@ def cmd_meta(args):
     return 1
 
 
+def cmd_verify_tag(args):
+    """verify-tag subcommand: ensure release tag matches canonical bl_info version."""
+    ok, _expected, message = _validate_release_tag(args.tag)
+    if ok:
+        print(message)
+        return 0
+    print(f"ERROR: {message}")
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -504,6 +536,16 @@ def main():
         help="Metadata field to print",
     )
 
+    verify_tag_p = sub.add_parser(
+        "verify-tag",
+        help="Validate that a stable release tag matches bl_info.version",
+    )
+    verify_tag_p.add_argument(
+        "--tag",
+        required=True,
+        help="Tag to validate (must be vX.Y.Z and equal v{bl_info.version})",
+    )
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -514,6 +556,8 @@ def main():
         sys.exit(cmd_install(args))
     elif args.command == "meta":
         sys.exit(cmd_meta(args))
+    elif args.command == "verify-tag":
+        sys.exit(cmd_verify_tag(args))
 
 
 if __name__ == "__main__":

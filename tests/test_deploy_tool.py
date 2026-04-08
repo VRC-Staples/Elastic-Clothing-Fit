@@ -94,3 +94,45 @@ class TestReadBlenderMin:
         init_py.write_text('bl_info = {"blender": (3, -2, 0)}', encoding="utf-8")
         with pytest.raises(ValueError, match="non-negative integers"):
             deploy._read_blender_min(init_py)
+
+
+class TestValidateReleaseTag:
+    def _init_with_version(self, tmp_path, version_tuple: str):
+        init_py = tmp_path / "__init__.py"
+        init_py.write_text(
+            f'bl_info = {{"version": {version_tuple}, "blender": (3, 2, 0)}}',
+            encoding="utf-8",
+        )
+        return init_py
+
+    def test_expected_tag_from_version(self, tmp_path):
+        init_py = self._init_with_version(tmp_path, "(1, 0, 6)")
+        assert deploy._expected_release_tag(init_py) == "v1.0.6"
+
+    def test_accepts_matching_semver_tag(self, tmp_path):
+        init_py = self._init_with_version(tmp_path, "(1, 2, 3)")
+        ok, expected, message = deploy._validate_release_tag("v1.2.3", init_py)
+        assert ok is True
+        assert expected == "v1.2.3"
+        assert "matches addon version" in message
+
+    def test_rejects_missing_v_prefix(self, tmp_path):
+        init_py = self._init_with_version(tmp_path, "(1, 2, 3)")
+        ok, expected, message = deploy._validate_release_tag("1.2.3", init_py)
+        assert ok is False
+        assert expected == "v1.2.3"
+        assert "malformed" in message
+
+    def test_rejects_mismatched_version(self, tmp_path):
+        init_py = self._init_with_version(tmp_path, "(1, 2, 3)")
+        ok, expected, message = deploy._validate_release_tag("v1.2.4", init_py)
+        assert ok is False
+        assert expected == "v1.2.3"
+        assert "does not match addon version" in message
+
+    def test_rejects_non_semver_shape(self, tmp_path):
+        init_py = self._init_with_version(tmp_path, "(1, 2, 3)")
+        ok, expected, message = deploy._validate_release_tag("v1.2", init_py)
+        assert ok is False
+        assert expected == "v1.2.3"
+        assert "malformed" in message
