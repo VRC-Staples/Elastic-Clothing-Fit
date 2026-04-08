@@ -44,6 +44,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install dev tools
+        run: pip install ruff pytest
+
+      - name: Lint — ruff
+        run: ruff check elastic_fit/ tests/ tools/
+
+      - name: Pytest
+        run: pytest tests/
+
       - name: Cache Blender
         id: cache-blender
         uses: actions/cache@v4
