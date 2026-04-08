@@ -17,11 +17,8 @@
 # Covered (T03 will extend):
 #   contextlib.closing usage, retry exception narrowing
 
-import io
 import os
 import re
-import tempfile
-import threading
 
 import pytest
 

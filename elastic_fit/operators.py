@@ -4,7 +4,6 @@
 # adaptive smoothing, offset fine-tuning, preserve follow) live in pipeline.py.
 
 import numpy as np
-import mathutils
 
 import bpy
 from bpy.props import IntProperty
@@ -12,7 +11,6 @@ from bpy.types import Operator
 
 from . import state
 from . import updater
-from . import deps
 from .state import (
     EFIT_PREFIX,
     _has_blockers,

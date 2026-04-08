@@ -39,3 +39,6 @@ tmp/
 # ── GSD baseline (auto-generated) ──
 .gsd
 .DS_Store
+
+# ── GSD baseline (auto-generated) ──
+.gsd-id

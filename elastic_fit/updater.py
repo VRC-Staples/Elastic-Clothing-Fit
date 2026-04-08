@@ -12,14 +12,11 @@ import os
 import re
 import sys
 import threading
-import time
 import subprocess
 import urllib.error
 import urllib.request
 
 import bpy
-
-from . import state
 
 
 # ---------------------------------------------------------------------------

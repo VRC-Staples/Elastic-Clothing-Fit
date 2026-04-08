@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 160
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"elastic_fit/__init__.py" = ["E402"]
+"tests/run_all.py" = ["E402"]
+"tests/blender_suites/**" = ["E402", "E701", "E702", "F401", "F841", "F541"]

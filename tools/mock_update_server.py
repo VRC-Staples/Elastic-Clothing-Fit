@@ -17,7 +17,7 @@ import os
 import queue
 import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _send_release_json(self, nightly):
         cfg = self.server._config()
         version  = cfg['version']
-        channel  = cfg['channel']
         notes    = cfg['notes']
         port     = cfg['port']
         zip_path = cfg['zip_path']

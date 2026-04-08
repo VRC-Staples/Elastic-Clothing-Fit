@@ -23,9 +23,6 @@
 
 import ast
 import pathlib
-import re
-import textwrap
-import pytest
 
 
 # ---------------------------------------------------------------------------

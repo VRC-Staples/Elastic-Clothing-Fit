@@ -16,9 +16,6 @@
 
 import os
 import re
-import tempfile
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
