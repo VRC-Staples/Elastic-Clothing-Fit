@@ -4,7 +4,7 @@
 # REQUIRES: elastic_fit addon installed and enabled.
 #           No active preview (fresh scene or after cancel/apply).
 #           A VIEW_3D area must be open in Blender.
-#           Steps 4-8 require ECF_Test2.blend; pass --blend-root <repo_root> to locate it.
+#           Steps 4-8 use ECF_Test2.blend in legacy mode; use --programmatic to synthesize armatures.
 #
 # Exit codes:
 #   0 — all assertions passed
@@ -15,20 +15,24 @@ import os
 
 # ---- parse CLI args ----
 _blend_root = None
+_programmatic = False
 _argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 _i = 0
 while _i < len(_argv):
     if _argv[_i] == "--blend-root" and _i + 1 < len(_argv):
         _blend_root = _argv[_i + 1]
         _i += 2
+    elif _argv[_i] == "--programmatic":
+        _programmatic = True
+        _i += 1
     else:
         _i += 1
 
-if _blend_root is None:
-    print("[ERROR] --blend-root <repo_root> is required")
+if _blend_root is None and not _programmatic:
+    print("[ERROR] --blend-root <repo_root> is required unless --programmatic is set")
     sys.exit(1)
 
-BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test2.blend")
+BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test2.blend") if _blend_root else ""
 
 # ---- failure counter ----
 _failed = 0
@@ -85,6 +89,75 @@ def _assert_approx(actual, expected, tol, label):
 # ---- end helpers ----
 
 import bpy
+
+sys.path.insert(0, os.path.dirname(__file__))
+from _programmatic_geometry import clear_programmatic_objects, get_view3d_context
+
+
+def _make_merge_test_armatures():
+    """Build synthetic base/donor armatures plus donor child mesh for merge tests."""
+    clear_programmatic_objects()
+
+    win, area, region = get_view3d_context()
+
+    base_data = bpy.data.armatures.new("ECF_MergeBaseData")
+    base_arm = bpy.data.objects.new("Armature", base_data)
+    bpy.context.scene.collection.objects.link(base_arm)
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    base_arm.select_set(True)
+    bpy.context.view_layer.objects.active = base_arm
+    with bpy.context.temp_override(window=win, area=area, region=region, active_object=base_arm):
+        bpy.ops.object.mode_set(mode="EDIT")
+    eb = base_arm.data.edit_bones.new("Hips")
+    eb.head = (0, 0, 0)
+    eb.tail = (0, 0, 0.1)
+    eb = base_arm.data.edit_bones.new("Spine")
+    eb.head = (0, 0, 1.0)
+    eb.tail = (0, 0, 1.1)
+    eb = base_arm.data.edit_bones.new("LeftArm")
+    eb.head = (-0.3, 0, 1.0)
+    eb.tail = (-0.6, 0, 1.0)
+    with bpy.context.temp_override(window=win, area=area, region=region, active_object=base_arm):
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    donor_data = bpy.data.armatures.new("ECF_MergeDonorData")
+    donor_arm = bpy.data.objects.new("Armature F", donor_data)
+    donor_arm.location = (0.2, 0, 0)
+    bpy.context.scene.collection.objects.link(donor_arm)
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    donor_arm.select_set(True)
+    bpy.context.view_layer.objects.active = donor_arm
+    with bpy.context.temp_override(window=win, area=area, region=region, active_object=donor_arm):
+        bpy.ops.object.mode_set(mode="EDIT")
+    eb = donor_arm.data.edit_bones.new("hips")
+    eb.head = (0, 0, 0)
+    eb.tail = (0, 0, 0.1)
+    eb = donor_arm.data.edit_bones.new("spine")
+    eb.head = (0, 0, 1.0)
+    eb.tail = (0, 0, 1.1)
+    eb = donor_arm.data.edit_bones.new("RightArm")
+    eb.head = (0.3, 0, 1.0)
+    eb.tail = (0.6, 0, 1.0)
+    with bpy.context.temp_override(window=win, area=area, region=region, active_object=donor_arm):
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    donor_child_mesh_data = bpy.data.meshes.new("ECF_MergeDonorChildMesh")
+    donor_child_mesh_data.from_pydata(
+        [(-0.1, -0.1, 0.0), (0.1, -0.1, 0.0), (0.1, 0.1, 0.0), (-0.1, 0.1, 0.0)],
+        [],
+        [(0, 1, 2, 3)],
+    )
+    donor_child_mesh = bpy.data.objects.new("ECF_MergeDonorChild", donor_child_mesh_data)
+    donor_child_mesh.parent = donor_arm
+    donor_child_mesh.parent_type = "ARMATURE"
+    arm_mod = donor_child_mesh.modifiers.new("Armature", "ARMATURE")
+    arm_mod.object = donor_arm
+    bpy.context.scene.collection.objects.link(donor_child_mesh)
+
+    bpy.context.view_layer.update()
+    return base_arm, donor_arm, donor_child_mesh
 
 # ============================================================
 # STEP 1: Properties exist with correct defaults
@@ -212,13 +285,19 @@ print("\n=== STEP 3 COMPLETE ===")
 # ============================================================
 print("\n=== STEP 4: efit.merge_armatures with merge_bones=True (join) ===")
 
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+if _programmatic:
+    base_arm, donor_arm, _ = _make_merge_test_armatures()
+    print("[INFO] programmatic geometry: synthetic armatures")
+else:
+    bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+    base_arm = bpy.data.objects["Armature"]
+    donor_arm = bpy.data.objects["Armature F"]
 
-_assert_true("Armature"        in bpy.data.objects, "ECF_Test2: base armature exists")
-_assert_true("Armature F" in bpy.data.objects, "ECF_Test2: donor armature exists")
+base_name = base_arm.name
+donor_name = donor_arm.name
 
-base_arm  = bpy.data.objects["Armature"]
-donor_arm = bpy.data.objects["Armature F"]
+_assert_true(base_name in bpy.data.objects, "ECF_Test2: base armature exists")
+_assert_true(donor_name in bpy.data.objects, "ECF_Test2: donor armature exists")
 
 # Record donor bones and child meshes before merge.
 donor_bone_names  = [b.name for b in donor_arm.data.bones]
@@ -238,12 +317,12 @@ with bpy.context.temp_override(window=_win, area=_area):
     result = bpy.ops.efit.merge_armatures()
 
 _assert_equal(result, {'FINISHED'}, "efit.merge_armatures returned FINISHED")
-_assert_true("Armature"        in bpy.data.objects,     "base armature still present after join")
-_assert_true("Armature F" not in bpy.data.objects, "donor armature removed after join")
+_assert_true(base_name in bpy.data.objects, "base armature still present after join")
+_assert_true(donor_name not in bpy.data.objects, "donor armature removed after join")
 
 # Donor bones should now be in base. Use case-insensitive check because the
 # merge preserves base-armature casing when names differ only by case.
-base_arm     = bpy.data.objects["Armature"]
+base_arm = bpy.data.objects[base_name]
 base_bone_names = [b.name for b in base_arm.data.bones]
 base_bone_lower = {n.lower() for n in base_bone_names}
 for bname in donor_bone_names:
@@ -270,13 +349,19 @@ print("\n=== STEP 4 COMPLETE ===")
 # ============================================================
 print("\n=== STEP 5: efit.merge_armatures with merge_bones=False (reparent children) ===")
 
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+if _programmatic:
+    base_arm, donor_arm, _ = _make_merge_test_armatures()
+    print("[INFO] programmatic geometry: synthetic armatures")
+else:
+    bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+    base_arm = bpy.data.objects["Armature"]
+    donor_arm = bpy.data.objects["Armature F"]
 
-_assert_true("Armature"        in bpy.data.objects, "ECF_Test2: base armature exists")
-_assert_true("Armature F" in bpy.data.objects, "ECF_Test2: donor armature exists")
+base_name = base_arm.name
+donor_name = donor_arm.name
 
-base_arm  = bpy.data.objects["Armature"]
-donor_arm = bpy.data.objects["Armature F"]
+_assert_true(base_name in bpy.data.objects, "ECF_Test2: base armature exists")
+_assert_true(donor_name in bpy.data.objects, "ECF_Test2: donor armature exists")
 
 # Record donor child meshes before merge.
 donor_child_names = [o.name for o in bpy.data.objects if o.parent == donor_arm and o.type == 'MESH']
@@ -296,11 +381,11 @@ with bpy.context.temp_override(window=_win, area=_area):
 _assert_equal(result, {'FINISHED'}, "efit.merge_armatures returned FINISHED")
 
 # Both armatures still exist -- no join happened.
-_assert_true("Armature"        in bpy.data.objects, "base armature still exists (no join)")
-_assert_true("Armature F" in bpy.data.objects, "donor armature still exists (no join)")
+_assert_true(base_name in bpy.data.objects, "base armature still exists (no join)")
+_assert_true(donor_name in bpy.data.objects, "donor armature still exists (no join)")
 
 # Child meshes reparented to base with armature modifiers retargeted.
-base_arm = bpy.data.objects["Armature"]
+base_arm = bpy.data.objects[base_name]
 for cname in donor_child_names:
     obj = bpy.data.objects.get(cname)
     if obj:
@@ -330,13 +415,19 @@ print("\n=== STEP 6: merge_align_first=True ===")
 # ------------------------------------------------------------------
 print("\n-- Sub-test A: alignment with real armatures from ECF_Test2.blend --")
 
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+if _programmatic:
+    base_arm, donor_arm, _ = _make_merge_test_armatures()
+    print("[INFO] programmatic geometry: synthetic armatures")
+else:
+    bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+    base_arm = bpy.data.objects["Armature"]
+    donor_arm = bpy.data.objects["Armature F"]
 
-_assert_true("Armature"        in bpy.data.objects, "ECF_Test2: base armature exists")
-_assert_true("Armature F" in bpy.data.objects, "ECF_Test2: donor armature exists")
+base_name = base_arm.name
+donor_name = donor_arm.name
 
-base_arm  = bpy.data.objects["Armature"]
-donor_arm = bpy.data.objects["Armature F"]
+_assert_true(base_name in bpy.data.objects, "ECF_Test2: base armature exists")
+_assert_true(donor_name in bpy.data.objects, "ECF_Test2: donor armature exists")
 
 base_map  = {b.name.lower(): b.name for b in base_arm.data.bones}
 donor_map = {b.name.lower(): b.name for b in donor_arm.data.bones}
