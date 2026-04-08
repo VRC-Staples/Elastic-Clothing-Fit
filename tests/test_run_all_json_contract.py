@@ -4,18 +4,20 @@ from pathlib import Path
 from tools.verify_run_all_json import DEFAULT_REQUIRED_SUITES, verify_json_file, verify_payload
 
 
+_KNOWN_GOOD_JSON = Path(__file__).parent / "fixtures" / "run_all_known_good.json"
+
+
 def _read_known_good_payload() -> dict:
-    path = Path(".gsd/milestones/M007/slices/S02/s02-verification.json")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(_KNOWN_GOOD_JSON.read_text(encoding="utf-8"))
 
 
 def _contains(errors: list[str], text: str) -> bool:
     return any(text in error for error in errors)
 
 
-def test_accepts_known_good_s02_artifact():
+def test_accepts_known_good_fixture_artifact():
     errors = verify_json_file(
-        Path(".gsd/milestones/M007/slices/S02/s02-verification.json"),
+        _KNOWN_GOOD_JSON,
         expected_suites=7,
         min_checks=240,
         required_suite_names=DEFAULT_REQUIRED_SUITES,
@@ -25,7 +27,7 @@ def test_accepts_known_good_s02_artifact():
 
 def test_rejects_unreadable_file():
     errors = verify_json_file(
-        Path(".gsd/milestones/M007/slices/S02/does-not-exist.json"),
+        _KNOWN_GOOD_JSON.parent / "does-not-exist.json",
         expected_suites=7,
         min_checks=240,
         required_suite_names=DEFAULT_REQUIRED_SUITES,

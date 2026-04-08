@@ -1,0 +1,56 @@
+{
+  "suites": [
+    {
+      "name": "UX Tabs",
+      "passed": 37,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    },
+    {
+      "name": "Fit Pipeline",
+      "passed": 19,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    },
+    {
+      "name": "Proximity",
+      "passed": 49,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    },
+    {
+      "name": "Armature Tools",
+      "passed": 84,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    },
+    {
+      "name": "Mesh Tools",
+      "passed": 21,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    },
+    {
+      "name": "Proxy Hull",
+      "passed": 12,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    },
+    {
+      "name": "VG Stability",
+      "passed": 25,
+      "failed": 0,
+      "skipped": false,
+      "failures": []
+    }
+  ],
+  "total_passed": 247,
+  "total_failed": 0,
+  "duration_seconds": 16.7
+}
