@@ -1,44 +1,40 @@
 name: Stable Release
 
 on:
-  push:
-    tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*'   # e.g. v1.0.5
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to release (must already exist, e.g. v1.0.5)'
-        required: true
+      hotfix:
+        type: boolean
+        default: false
+        description: "Rebuild and overwrite release at current version (artifact fix only -- does not bump version)"
 
 jobs:
-  release:
+
+  setup:
+    name: Version Check
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - blender_version: '3.6.23'
-            blender_dir: 'blender-3.6.23-linux-x64'
-            blender_series: 'Blender3.6'
-          - blender_version: '4.2.19'
-            blender_dir: 'blender-4.2.19-linux-x64'
-            blender_series: 'Blender4.2'
-          - blender_version: '5.1.0'
-            blender_dir: 'blender-5.1.0-linux-x64'
-            blender_series: 'Blender5.1'
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+      create_tag: ${{ steps.decide.outputs.create_tag }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Fetch full history so bl_info version reads correctly
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
-      # tools/ and tests/ live on dev, not on main.
-      # Tags may point to main, so we restore these directories explicitly
-      # rather than relying on them being present in the checked-out tree.
       - name: Restore dev tooling from dev
         run: |
           git fetch origin dev
@@ -49,65 +45,113 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dev tools
-        run: pip install ruff pytest
-
-      - name: Lint — ruff
-        run: ruff check elastic_fit/ tests/ tools/
-
-      - name: Pytest
-        run: pytest tests/
-
-      - name: Static analysis — updater thread safety
-        run: python tests/verify_updater.py
-
-      - name: Determine release tag
-        id: tag
+      - name: Resolve version
+        id: resolve
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          VERSION=$(python tools/deploy.py meta --field version)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not resolve version from bl_info"
+            exit 1
           fi
+          HEAD_SHA="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::Resolved version $VERSION at $HEAD_SHA"
 
-      - name: Validate release tag against bl_info.version
-        run: python tools/deploy.py verify-tag --tag "${{ steps.tag.outputs.TAG }}"
-
-      - name: Cache Blender
-        id: cache-blender
-        uses: actions/cache@v4
-        with:
-          path: ~/blender-cache
-          key: blender-${{ matrix.blender_version }}-linux-x64
-
-      - name: Download Blender
-        if: steps.cache-blender.outputs.cache-hit != 'true'
+      - name: Decide if we should release
+        id: decide
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          IS_HOTFIX: "${{ inputs.hotfix || 'false' }}"
         run: |
-          mkdir -p ~/blender-cache
-          cd ~/blender-cache
-          curl -L -O "https://download.blender.org/release/${{ matrix.blender_series }}/blender-${{ matrix.blender_version }}-linux-x64.tar.xz"
-          tar -xJf "blender-${{ matrix.blender_version }}-linux-x64.tar.xz"
-          rm "blender-${{ matrix.blender_version }}-linux-x64.tar.xz"
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import socket
+          import sys
+          import urllib.error
+          import urllib.request
 
-      - name: Install xvfb
-        run: sudo apt-get install -y xvfb
+          is_hotfix = os.environ.get("IS_HOTFIX", "false").strip().lower() == "true"
+          version   = os.environ.get("VERSION", "").strip()
+          repo      = os.environ.get("GITHUB_REPOSITORY", "").strip()
+          token     = os.environ.get("GITHUB_TOKEN", "").strip()
+          output    = os.environ["GITHUB_OUTPUT"]
 
-      - name: Build and test
-        run: |
-          BLENDER_BIN="$HOME/blender-cache/${{ matrix.blender_dir }}/blender"
-          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
+          if is_hotfix:
+              print("::notice::Hotfix mode — overwriting artifacts for current version.")
+              with open(output, "a") as fh:
+                  print("should_release=true", file=fh)
+                  print("create_tag=false", file=fh)
+              sys.exit(0)
 
-      - name: Upload release zip artifact (single publisher lane)
-        if: matrix.blender_version == '5.1.0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-zip
-          path: ElasticClothingFit-v*.zip
-          if-no-files-found: error
+          try:
+              version_parts = tuple(int(p) for p in version.split("."))
+          except ValueError:
+              raise SystemExit(f"Invalid version: {version}")
 
-  publish-release:
+          url = f"https://api.github.com/repos/{repo}/releases/latest"
+          req = urllib.request.Request(url, headers={
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          })
+
+          latest_parts = ()
+          latest_version = ""
+          try:
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  data = json.loads(resp.read().decode("utf-8"))
+              tag_name = data.get("tag_name", "").strip()
+              m = re.match(r"^v?(\d+(?:\.\d+)*)$", tag_name)
+              if m:
+                  latest_version = tag_name
+                  latest_parts = tuple(int(p) for p in m.group(1).split("."))
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  print("::notice::No existing releases found — will create first release.")
+              else:
+                  details = exc.read().decode("utf-8", errors="replace")
+                  print(f"::error::GitHub API HTTP {exc.code}: {details[:400]}")
+                  sys.exit(1)
+          except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+              print(f"::error::GitHub API error: {exc}")
+              sys.exit(1)
+
+          def normalize(parts, length):
+              return parts + (0,) * (length - len(parts))
+
+          should_release = False
+          create_tag     = False
+
+          if not latest_parts:
+              should_release = True
+              create_tag     = True
+          else:
+              max_len = max(len(version_parts), len(latest_parts))
+              v = normalize(version_parts, max_len)
+              l = normalize(latest_parts,  max_len)
+              if v > l:
+                  should_release = True
+                  create_tag     = True
+              else:
+                  print(f"::notice::Version {version} is not newer than latest release {latest_version}. Skipping.")
+
+          with open(output, "a") as fh:
+              print(f"should_release={'true' if should_release else 'false'}", file=fh)
+              print(f"create_tag={'true' if create_tag else 'false'}", file=fh)
+
+          if should_release:
+              print(f"::notice::Will release version {version} (create_tag={create_tag})")
+          PY
+
+  build:
+    name: Build & Publish
+    needs: [setup]
+    if: needs.setup.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    needs: [release]
     permissions:
       contents: write
 
@@ -115,11 +159,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.setup.outputs.head_sha }}
           fetch-depth: 0
 
-      # tools/ and tests/ live on dev, not on main.
-      # Tags may point to main, so we restore these directories explicitly
-      # rather than relying on them being present in the checked-out tree.
       - name: Restore dev tooling from dev
         run: |
           git fetch origin dev
@@ -130,34 +172,36 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Determine release tag
-        id: tag
+      - name: Build release zip
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Validate release tag against bl_info.version
-        run: python tools/deploy.py verify-tag --tag "${{ steps.tag.outputs.TAG }}"
-
-      - name: Download release zip artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: release-zip
-          path: .
-
-      - name: Verify release artifact exists
-        run: |
-          ZIP=$(ls ElasticClothingFit-v*.zip | grep -v nightly | head -1 || true)
+          python tools/deploy.py build --skip-test
+          ZIP=$(ls ElasticClothingFit-v*.zip 2>/dev/null | grep -v nightly | head -1 || true)
           if [ -z "$ZIP" ]; then
-            echo "Expected stable release zip artifact was not downloaded." >&2
+            echo "::error::Expected release zip was not produced."
             exit 1
           fi
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
 
-      - name: Read bl_info metadata and compute SHA-256
+      - name: Guard against duplicate tag
+        if: needs.setup.outputs.create_tag == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.setup.outputs.version }}"
+          http_status=$(curl -s -o /tmp/tag-check.json -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/${TAG}")
+          if [ "$http_status" = "200" ]; then
+            echo "::error::Tag $TAG already exists — release blocked to prevent overwrite."
+            exit 1
+          fi
+          if [ "$http_status" != "404" ]; then
+            echo "::error::Unexpected HTTP $http_status checking tag $TAG."
+            exit 1
+          fi
+
+      - name: Read BLENDER_MIN and compute SHA-256
         id: meta
         run: |
           BLENDER_MIN=$(python tools/deploy.py meta --field blender-min)
@@ -165,11 +209,21 @@ jobs:
           echo "BLENDER_MIN=$BLENDER_MIN" >> "$GITHUB_OUTPUT"
           echo "SHA256=$SHA"              >> "$GITHUB_OUTPUT"
 
+      - name: Create release tag
+        if: needs.setup.outputs.create_tag == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.setup.outputs.version }}"
+          gh api --method POST /repos/${{ github.repository }}/git/refs \
+            -f "ref=refs/tags/$TAG" \
+            -f "sha=${{ needs.setup.outputs.head_sha }}"
+
       - name: Create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.tag.outputs.TAG }}"
+          TAG="v${{ needs.setup.outputs.version }}"
           BLENDER_MIN="${{ steps.meta.outputs.BLENDER_MIN }}"
           SHA256="${{ steps.meta.outputs.SHA256 }}"
 
@@ -178,5 +232,4 @@ jobs:
 
           gh release create "$TAG" "$ZIP" \
             --title "$TAG" \
-            --notes "$NOTES" \
-            --verify-tag
+            --notes "$NOTES"

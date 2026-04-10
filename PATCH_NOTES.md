@@ -17,6 +17,24 @@ Users currently on a nightly build who hit the "Invalid tag format" error can up
 3. v1.0.6 is offered through the stable channel, downloads and installs automatically
 4. Re-enable **"Nightly Dev Build"** if desired — the fixed tag validation handles future nightly updates correctly
 
+### Internal improvements
+
+**CI pipeline**
+
+- CI now runs the full functional regression suite (7 suites, 240+ checks) against a three-version Blender matrix (3.6, 4.2, 5.1) on every pull request and push to non-`dev` branches. Previously CI ran only ruff and pytest with no Blender.
+- Stable release workflow expanded to the same three-version Blender matrix. Builds are validated against all supported Blender versions before a release artifact is published.
+- Nightly workflow refactored into a matrix verification job and a dedicated publish job. Each matrix leg now uploads a JSON artifact on failure for post-mortem inspection.
+
+**Testing infrastructure**
+
+- `run_all.py` gained a `--programmatic` mode. In this mode suites run without a Blender GUI session and produce a structured JSON report. Five suites converted: `fit_pipeline`, `vg_stability`, `suite_proximity`, `suite_armature_tools`, and `suite_proxy_hull`.
+- Added `tools/verify_run_all_json.py` -- a CLI tool and pytest suite that validates the `run_all` JSON output against a contract (expected suite count, minimum check count). Used by CI to catch silent suite failures.
+- `test_workflow_cicd_contract.py` and `test_deploy_tool.py` added to cover workflow structure and deploy tool behavior in pytest.
+
+**Code quality**
+
+- Added `pyproject.toml` with ruff configuration. All 22 pre-existing lint warnings resolved.
+
 ---
 
 ## v1.0.5

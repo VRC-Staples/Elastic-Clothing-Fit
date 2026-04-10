@@ -2,23 +2,102 @@ name: CI
 
 on:
   push:
-    branches-ignore:
-      - dev
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - blender_version: "5.1.0"
+            blender_dir: "blender-5.1.0-linux-x64"
+            url_subdir: "Blender5.1"
+          - blender_version: "4.2.19"
+            blender_dir: "blender-4.2.19-linux-x64"
+            url_subdir: "Blender4.2"
+          - blender_version: "3.6.23"
+            blender_dir: "blender-3.6.23-linux-x64"
+            url_subdir: "Blender3.6"
+
+    env:
+      BLENDER_VERSION: ${{ matrix.blender_version }}
+      BLENDER_DIR: ${{ matrix.blender_dir }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dev tools
         run: pip install ruff pytest
+
       - name: Lint — ruff
         run: ruff check elastic_fit/ tests/ tools/
+
       - name: Pytest
         run: pytest tests/
+
+      - name: Cache Blender
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: ~/blender-cache
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender
+        if: steps.cache-blender.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender-cache
+          cd ~/blender-cache
+          curl -L -O "https://download.blender.org/release/${{ matrix.url_subdir }}/blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          tar -xJf "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+          rm "blender-${{ env.BLENDER_VERSION }}-linux-x64.tar.xz"
+
+      - name: Install xvfb
+        run: sudo apt-get install -y xvfb
+
+      - name: Build and test
+        run: |
+          BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
+          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
+
+      - name: Run functional regression suites (programmatic JSON)
+        id: functional-run-all
+        run: |
+          RUN_ALL_JSON="/tmp/run-all-${{ matrix.blender_version }}.json"
+          echo "RUN_ALL_JSON=$RUN_ALL_JSON" >> "$GITHUB_ENV"
+          BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
+          xvfb-run -a python tests/run_all.py \
+            --blender "$BLENDER_BIN" \
+            --programmatic \
+            --json-out "$RUN_ALL_JSON"
+
+      - name: Verify functional run_all JSON contract
+        id: verify-run-all-json
+        if: ${{ always() }}
+        run: |
+          python tools/verify_run_all_json.py \
+            --json "$RUN_ALL_JSON" \
+            --expected-suites 7 \
+            --min-checks 240
+
+      - name: Upload run_all JSON artifact on failure
+        if: ${{ always() && (steps.functional-run-all.outcome == 'failure' || steps.verify-run-all-json.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-all-json-${{ matrix.blender_version }}
+          path: ${{ env.RUN_ALL_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Static analysis — updater thread safety
         run: python tests/verify_updater.py

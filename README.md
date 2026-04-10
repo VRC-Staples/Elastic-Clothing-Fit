@@ -1,5 +1,6 @@
 # Elastic Clothing Fit
 
+[![CI](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/ci.yml/badge.svg)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/ci.yml)
 [![Nightly Dev Build](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/nightly.yml/badge.svg?branch=dev)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/nightly.yml)
 [![Latest Release](https://img.shields.io/github/v/release/VRC-Staples/Elastic-Clothing-Fit?label=release)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/releases/latest)
 [![Blender](https://img.shields.io/badge/Blender-3.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
