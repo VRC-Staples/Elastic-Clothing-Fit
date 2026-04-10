@@ -203,7 +203,7 @@ class TestOffsetGroupWeightsParity:
         fitted = list(range(5))
         og = _OffsetGroup("G")
 
-        result_fallback = _compute_offset_group_weights(
+        _compute_offset_group_weights(
             cloth, [og], fitted, vg_membership=None)
         vg_mem = _build_vg_membership_weight_dict(cloth, fitted)
         result_fast = _compute_offset_group_weights(

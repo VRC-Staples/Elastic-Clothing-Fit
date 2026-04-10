@@ -11,27 +11,40 @@
 import sys
 import os
 
+sys.path.insert(0, os.path.dirname(__file__))
+from _programmatic_geometry import (
+    clear_programmatic_objects,
+    get_view3d_context,
+    make_concave_body,
+    make_icosphere,
+)
+
 # ---- parse CLI args ----
 _argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 _blend_root = None
+_programmatic = False
 _i = 0
 while _i < len(_argv):
     if _argv[_i] == "--blend-root" and _i + 1 < len(_argv):
         _blend_root = _argv[_i + 1]
         _i += 2
+    elif _argv[_i] == "--programmatic":
+        _programmatic = True
+        _i += 1
     else:
         _i += 1
 
-if _blend_root is None:
-    print("[ERROR] --blend-root <repo_root> is required")
+if _blend_root is None and not _programmatic:
+    print("[ERROR] --blend-root <repo_root> is required (unless --programmatic is set)")
     sys.exit(1)
 
-BLEND_PATH    = os.path.join(_blend_root, "tests", "ECF_Test.blend")
-BODY_NAME     = "Body"
+BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test.blend") if _blend_root else None
+BODY_NAME = "Body"
 CLOTHING_NAME = "Outfit"
 
 # ---- failure counter ----
 _failed = 0
+
 
 # ---- test helpers ----
 def _assert_true(condition, label):
@@ -41,6 +54,7 @@ def _assert_true(condition, label):
     if not condition:
         _failed += 1
     return condition
+
 
 def _assert_equal(actual, expected, label):
     global _failed
@@ -52,9 +66,35 @@ def _assert_equal(actual, expected, label):
         _failed += 1
     return ok
 
+
 # ---- import bpy (Blender's Python API) ----
 import bpy
+import mathutils
 import elastic_fit.state as state
+
+
+def _setup_scene_for_fit():
+    """Create/reset test geometry and bind efit mesh pickers for one fit pass."""
+    if _programmatic:
+        clear_programmatic_objects()
+        body = make_concave_body("ECF_Body")
+        # Radius 1.2 intentionally increases contact with concave regions so
+        # STEP 4 produces measurable hull/no-hull divergence.
+        cloth = make_icosphere("ECF_Clothing", radius=1.2)
+        print("[INFO] programmatic geometry: concave body + sphere clothing")
+    else:
+        bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+        body = bpy.data.objects[BODY_NAME]
+        cloth = bpy.data.objects[CLOTHING_NAME]
+
+    p = bpy.context.scene.efit_props
+    p.body_obj = body
+    p.clothing_obj = cloth
+
+    # Re-fetch VIEW_3D handles after each scene reset; references can go stale.
+    _win, _area, _region = get_view3d_context()
+    return body, cloth, _win, _area, _region
+
 
 # ============================================================
 # STEP 1: Property exists with correct default
@@ -70,15 +110,11 @@ print("\n=== STEP 1 COMPLETE ===")
 #         (toggle=False must not change pipeline behaviour)
 # ============================================================
 print("\n=== STEP 2: hull=False fit runs without error ===")
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+_body, cloth, _win, _area, _region = _setup_scene_for_fit()
 p = bpy.context.scene.efit_props
-p.body_obj     = bpy.data.objects[BODY_NAME]
-p.clothing_obj = bpy.data.objects[CLOTHING_NAME]
 p.use_proxy_hull = False
 
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     result = bpy.ops.efit.fit()
 
 _assert_equal(result, {"FINISHED"}, "efit.fit returned FINISHED with hull=False")
@@ -89,11 +125,10 @@ hull_objects = [o for o in bpy.data.objects if "HullProxy" in o.name]
 _assert_equal(len(hull_objects), 0, "no EFit_HullProxy object in scene after hull=False fit")
 
 # Record baseline positions.
-cloth = bpy.data.objects[CLOTHING_NAME]
 baseline_positions = [v.co.copy() for v in cloth.data.vertices]
 
 # Cancel preview so the clothing is restored before the hull test.
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     bpy.ops.efit.preview_cancel()
 
 _assert_true(not state._efit_cache, "cache cleared after cancel")
@@ -104,15 +139,11 @@ print("\n=== STEP 2 COMPLETE ===")
 # STEP 3: Hull enabled -- fit runs without error, no hull leaks
 # ============================================================
 print("\n=== STEP 3: hull=True fit runs, no hull leaks ===")
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+_body, cloth, _win, _area, _region = _setup_scene_for_fit()
 p = bpy.context.scene.efit_props
-p.body_obj       = bpy.data.objects[BODY_NAME]
-p.clothing_obj   = bpy.data.objects[CLOTHING_NAME]
 p.use_proxy_hull = True
 
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     result = bpy.ops.efit.fit()
 
 _assert_equal(result, {"FINISHED"}, "efit.fit returned FINISHED with hull=True")
@@ -123,17 +154,25 @@ hull_objects = [o for o in bpy.data.objects if "HullProxy" in o.name]
 _assert_equal(len(hull_objects), 0, "no EFit_HullProxy object leaks into scene during preview")
 
 # Fitted vertices must have actually moved from their original positions.
-cloth = bpy.data.objects[CLOTHING_NAME]
-originals = state._efit_cache.get("all_originals", {})
-fitted    = state._efit_cache.get("fitted_indices", [])
-moved = sum(
-    1 for vi in fitted
-    if vi in originals and (cloth.data.vertices[vi].co - originals[vi]).length > 1e-6
-)
+originals = state._efit_cache.get("all_originals")
+fitted = state._efit_cache.get("fitted_indices") or []
+vi_to_pos = {int(vi): i for i, vi in enumerate(fitted)}
+originals_len = len(originals) if originals is not None else 0
+
+moved = 0
+for vi in fitted:
+    idx = int(vi)
+    pos = vi_to_pos.get(idx)
+    if pos is None or originals is None or pos >= originals_len:
+        continue
+    arr_row = mathutils.Vector(originals[pos])
+    if (cloth.data.vertices[idx].co - arr_row).length > 1e-6:
+        moved += 1
+
 _assert_true(moved > 0, f"at least one fitted vertex moved with hull=True ({moved} moved)")
 
 # Apply and confirm hull still absent after apply.
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     bpy.ops.efit.preview_apply()
 hull_after_apply = [o for o in bpy.data.objects if "HullProxy" in o.name]
 _assert_equal(len(hull_after_apply), 0, "no EFit_HullProxy after apply")
@@ -149,35 +188,23 @@ print("\n=== STEP 3 COMPLETE ===")
 print("\n=== STEP 4: hull produces different positions than no-hull ===")
 
 # Fit WITHOUT hull and record applied positions.
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
-# Re-fetch window/area AFTER open_mainfile -- the previous screen objects are stale.
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
+_body, cloth, _win, _area, _region = _setup_scene_for_fit()
 p = bpy.context.scene.efit_props
-p.body_obj       = bpy.data.objects[BODY_NAME]
-p.clothing_obj   = bpy.data.objects[CLOTHING_NAME]
 p.use_proxy_hull = False
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     bpy.ops.efit.fit()
-cloth = bpy.data.objects[CLOTHING_NAME]
 no_hull_positions = [v.co.copy() for v in cloth.data.vertices]
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     bpy.ops.efit.preview_cancel()
 
 # Fit WITH hull and record applied positions.
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
-# Re-fetch window/area AFTER open_mainfile -- the previous screen objects are stale.
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == "VIEW_3D")
+_body, cloth, _win, _area, _region = _setup_scene_for_fit()
 p = bpy.context.scene.efit_props
-p.body_obj       = bpy.data.objects[BODY_NAME]
-p.clothing_obj   = bpy.data.objects[CLOTHING_NAME]
 p.use_proxy_hull = True
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     bpy.ops.efit.fit()
-cloth = bpy.data.objects[CLOTHING_NAME]
 hull_positions = [v.co.copy() for v in cloth.data.vertices]
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     bpy.ops.efit.preview_cancel()
 
 # At least some vertices must differ between the two fits.
@@ -191,6 +218,7 @@ _assert_true(
     differing > 0,
     f"hull=True produces different vertex positions than hull=False ({differing} vertices differ)"
 )
+print(f"  differing_verts: {differing}")
 print(f"  {differing}/{len(hull_positions)} vertices differ between hull and no-hull fits")
 
 p.use_proxy_hull = False

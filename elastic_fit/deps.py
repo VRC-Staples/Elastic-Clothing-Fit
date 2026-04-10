@@ -14,11 +14,9 @@
 #   - Check `deps.PYKDTREE_AVAILABLE` before using `deps.BatchKDTree`.
 #   - When unavailable (unsupported platform / install failed), fall back to mathutils.KDTree.
 
-import os
 import pathlib
 import platform
 import site
-import struct
 import subprocess
 import sys
 

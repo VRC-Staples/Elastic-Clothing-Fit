@@ -5,6 +5,8 @@ Elastic Clothing Fit: standalone deployment tool.
 Usage:
     python tools/deploy.py build [--blender <exe>] [--skip-test]
     python tools/deploy.py select [--zip <path>] [--blender <exe>] [--skip-test]
+    python tools/deploy.py meta --field {version,blender-min}
+    python tools/deploy.py verify-tag --tag <vX.Y.Z>
 """
 import argparse
 import datetime
@@ -52,14 +54,38 @@ def _parse_zip_version(filename):
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
-def _read_version(init_path=None):
-    """Read version from bl_info in __init__.py. Returns 'major.minor.patch'."""
+def _read_bl_info_tuple(field, init_path=None):
+    """Read a 3-int tuple field from bl_info in __init__.py.
+
+    Raises ValueError naming the missing/malformed field.
+    """
     path = pathlib.Path(init_path or _INIT_PY)
     text = path.read_text(encoding="utf-8")
-    m = re.search(r'"version"\s*:\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', text)
+    m = re.search(
+        rf'"{re.escape(field)}"\s*:\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)',
+        text,
+    )
     if not m:
-        raise ValueError(f"Could not parse version from {path}")
-    return f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
+        raise ValueError(f"Could not parse bl_info['{field}'] tuple from {path}")
+    values = tuple(int(m.group(i)) for i in range(1, 4))
+    if any(v < 0 for v in values):
+        raise ValueError(f"bl_info['{field}'] must contain non-negative integers in {path}")
+    return values
+
+
+def _read_version(init_path=None):
+    """Read version from bl_info in __init__.py. Returns 'major.minor.patch'."""
+    major, minor, patch = _read_bl_info_tuple("version", init_path=init_path)
+    return f"{major}.{minor}.{patch}"
+
+
+def _read_blender_min(init_path=None):
+    """Read minimum Blender version from bl_info. Returns 'major.minor.patch'."""
+    major, minor, patch = _read_bl_info_tuple("blender", init_path=init_path)
+    return f"{major}.{minor}.{patch}"
+
+
+_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
 
 def _parse_results(stdout):
@@ -73,6 +99,24 @@ def _parse_results(stdout):
         elif "[FAIL]" in s:
             failed.append(s)
     return {"passed": passed, "failed": failed}
+
+
+def _expected_release_tag(init_path=None):
+    """Return the canonical stable release tag string (e.g. v1.2.3)."""
+    return f"v{_read_version(init_path=init_path)}"
+
+
+def _validate_release_tag(tag, init_path=None):
+    """Validate a stable release tag against bl_info.version.
+
+    Returns (ok, expected_tag, message).
+    """
+    expected = _expected_release_tag(init_path=init_path)
+    if not _TAG_RE.fullmatch(tag or ""):
+        return False, expected, f"Tag '{tag}' is malformed; expected format vX.Y.Z"
+    if tag != expected:
+        return False, expected, f"Tag '{tag}' does not match addon version '{expected}'"
+    return True, expected, f"Tag '{tag}' matches addon version '{expected}'"
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +466,30 @@ def cmd_install(args):
     return _run_install(blender, zip_path)
 
 
+def cmd_meta(args):
+    """meta subcommand: print metadata fields derived from bl_info."""
+    field = args.field
+    if field == "version":
+        print(_read_version())
+        return 0
+    if field == "blender-min":
+        print(_read_blender_min())
+        return 0
+
+    print(f"ERROR: Unsupported --field value: {field}")
+    return 1
+
+
+def cmd_verify_tag(args):
+    """verify-tag subcommand: ensure release tag matches canonical bl_info version."""
+    ok, _expected, message = _validate_release_tag(args.tag)
+    if ok:
+        print(message)
+        return 0
+    print(f"ERROR: {message}")
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -460,6 +528,24 @@ def main():
 
     sub.add_parser("install", help="Build zip and install addon into Blender (leaves it enabled)")
 
+    meta_p = sub.add_parser("meta", help="Print metadata values derived from bl_info")
+    meta_p.add_argument(
+        "--field",
+        choices=("version", "blender-min"),
+        required=True,
+        help="Metadata field to print",
+    )
+
+    verify_tag_p = sub.add_parser(
+        "verify-tag",
+        help="Validate that a stable release tag matches bl_info.version",
+    )
+    verify_tag_p.add_argument(
+        "--tag",
+        required=True,
+        help="Tag to validate (must be vX.Y.Z and equal v{bl_info.version})",
+    )
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -468,6 +554,10 @@ def main():
         sys.exit(cmd_select(args))
     elif args.command == "install":
         sys.exit(cmd_install(args))
+    elif args.command == "meta":
+        sys.exit(cmd_meta(args))
+    elif args.command == "verify-tag":
+        sys.exit(cmd_verify_tag(args))
 
 
 if __name__ == "__main__":

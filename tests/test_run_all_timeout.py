@@ -5,7 +5,6 @@ it is extracted verbatim here for direct unit testing.  The extraction is kept
 identical to the source so that any future change to the source function breaks
 these tests immediately (they should fail, prompting a sync).
 """
-import subprocess
 
 
 # ---------------------------------------------------------------------------

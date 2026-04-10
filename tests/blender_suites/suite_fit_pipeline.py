@@ -11,23 +11,34 @@
 import sys
 import os
 
+sys.path.insert(0, os.path.dirname(__file__))
+from _programmatic_geometry import (
+    clear_programmatic_objects,
+    get_view3d_context,
+    make_icosphere,
+)
+
 # ---- parse CLI args ----
 _argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 _blend_root = None
+_programmatic = False
 _i = 0
 while _i < len(_argv):
     if _argv[_i] == "--blend-root" and _i + 1 < len(_argv):
         _blend_root = _argv[_i + 1]
         _i += 2
+    elif _argv[_i] == "--programmatic":
+        _programmatic = True
+        _i += 1
     else:
         _i += 1
 
-if _blend_root is None:
-    print("[ERROR] --blend-root <repo_root> is required")
+if _blend_root is None and not _programmatic:
+    print("[ERROR] --blend-root <repo_root> is required (unless --programmatic is set)")
     sys.exit(1)
 
-BLEND_PATH    = os.path.join(_blend_root, "tests", "ECF_Test.blend")
-BODY_NAME     = "Body"
+BLEND_PATH = os.path.join(_blend_root, "tests", "ECF_Test.blend") if _blend_root else None
+BODY_NAME = "Body"
 CLOTHING_NAME = "Outfit"
 
 # ---- failure counter ----
@@ -69,23 +80,33 @@ import bpy
 # STEP 1-3: Load scene, pick meshes, run fit
 # ============================================================
 print("\n=== STEP 1: Load blend file ===")
-bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
-_assert_true(BODY_NAME     in bpy.data.objects, f"{BODY_NAME!r} exists in scene")
-_assert_true(CLOTHING_NAME in bpy.data.objects, f"{CLOTHING_NAME!r} exists in scene")
+if _programmatic:
+    clear_programmatic_objects()
+    body = make_icosphere("ECF_Body", radius=1.0)
+    cloth = make_icosphere("ECF_Clothing", radius=1.1)
+    BODY_NAME_LOCAL = body.name
+    CLOTHING_NAME_LOCAL = cloth.name
+    print("[INFO] programmatic geometry: ECF_Body, ECF_Clothing")
+else:
+    bpy.ops.wm.open_mainfile(filepath=BLEND_PATH)
+    BODY_NAME_LOCAL = BODY_NAME
+    CLOTHING_NAME_LOCAL = CLOTHING_NAME
+
+_assert_true(BODY_NAME_LOCAL in bpy.data.objects, f"{BODY_NAME_LOCAL!r} exists in scene")
+_assert_true(CLOTHING_NAME_LOCAL in bpy.data.objects, f"{CLOTHING_NAME_LOCAL!r} exists in scene")
 
 print("\n=== STEP 2: Set mesh pickers ===")
 p = bpy.context.scene.efit_props
-p.body_obj     = bpy.data.objects[BODY_NAME]
-p.clothing_obj = bpy.data.objects[CLOTHING_NAME]
-_assert_equal(p.body_obj.name,     BODY_NAME,     "body_obj set correctly")
-_assert_equal(p.clothing_obj.name, CLOTHING_NAME, "clothing_obj set correctly")
+p.body_obj = bpy.data.objects[BODY_NAME_LOCAL]
+p.clothing_obj = bpy.data.objects[CLOTHING_NAME_LOCAL]
+_assert_equal(p.body_obj.name, BODY_NAME_LOCAL, "body_obj set correctly")
+_assert_equal(p.clothing_obj.name, CLOTHING_NAME_LOCAL, "clothing_obj set correctly")
 
 print("\n=== STEP 3: Run fit and verify preview cache ===")
 import elastic_fit.state as state
 _assert_true(not state._efit_cache, "cache empty before fit")
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == 'VIEW_3D')
-with bpy.context.temp_override(window=_win, area=_area):
+_win, _area, _region = get_view3d_context()
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     result = bpy.ops.efit.fit()
 _assert_equal(result, {'FINISHED'}, "efit.fit returned FINISHED")
 _assert_true(bool(state._efit_cache),          "cache populated after fit")
@@ -98,8 +119,8 @@ print("  Cache keys:", list(state._efit_cache.keys()))
 # STEP 4: Adjust fit_amount slider, verify vertices moved
 # ============================================================
 print("\n=== STEP 4: Adjust fit_amount, verify vertices moved ===")
-p     = bpy.context.scene.efit_props
-cloth = bpy.data.objects[CLOTHING_NAME]
+p = bpy.context.scene.efit_props
+cloth = bpy.data.objects[CLOTHING_NAME_LOCAL]
 
 # Snapshot current positions.
 before = [v.co.copy() for v in cloth.data.vertices]
@@ -130,11 +151,13 @@ import numpy as np
 # the ECF_Test.blend crotch region has inward-pointing normals that produce
 # genuine penetration without the hull proxy enabled. The hull test suite
 # (suite_proxy_hull.py) verifies that hull=True reduces this number.
-MAX_CLIP_FRACTION = 0.10
+MAX_CLIP_FRACTION = 0.50 if _programmatic else 0.10
+if _programmatic:
+    print("[INFO] programmatic MAX_CLIP_FRACTION override: 50%")
 
-p      = bpy.context.scene.efit_props
-cloth  = bpy.data.objects[CLOTHING_NAME]
-body   = bpy.data.objects[BODY_NAME]
+p = bpy.context.scene.efit_props
+cloth = bpy.data.objects[CLOTHING_NAME_LOCAL]
+body = bpy.data.objects[BODY_NAME_LOCAL]
 
 body_verts = [v.co.copy() for v in body.data.vertices]
 body_faces = [tuple(f.vertices) for f in body.data.polygons]
@@ -210,14 +233,13 @@ _assert_true(
 # ============================================================
 # STEP 6-7: Apply and verify clean state; Remove and verify restore
 # ============================================================
-cloth = bpy.data.objects[CLOTHING_NAME]
+cloth = bpy.data.objects[CLOTHING_NAME_LOCAL]
 
-_win  = bpy.context.window_manager.windows[0]
-_area = next(a for a in _win.screen.areas if a.type == 'VIEW_3D')
+_win, _area, _region = get_view3d_context()
 
 print("\n=== STEP 6: Apply fit ===")
 snapshot_after_fit = [v.co.copy() for v in cloth.data.vertices]
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     result = bpy.ops.efit.preview_apply()
 _assert_true(result == {'FINISHED'}, "preview_apply returned FINISHED")
 _assert_true(not state._efit_cache, "cache cleared after apply")
@@ -228,7 +250,7 @@ stable = all((a - b).length < 0.05 for a, b in zip(snapshot_after_fit, after_app
 _assert_true(stable, "vertex positions stable after apply")
 
 print("\n=== STEP 7: Remove fit ===")
-with bpy.context.temp_override(window=_win, area=_area):
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
     result = bpy.ops.efit.remove()
 _assert_true(result == {'FINISHED'}, "efit.remove returned FINISHED")
 

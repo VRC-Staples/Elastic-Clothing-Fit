@@ -190,7 +190,6 @@ class TestApplyDispSmoothing:
         }
 
         max_gradients = []
-        arr = [list(row) for row in smoothed_arr]
         for n_passes in range(1, 6):
             arr_after = _apply_disp_smoothing_py(
                 [list(row) for row in smoothed_arr],

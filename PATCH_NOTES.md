@@ -1,5 +1,42 @@
 # Patch Notes
 
+## v1.0.6
+
+### Bug fixes
+
+- **Crash on certain CATS-imported FBX clothing meshes.** Fitting some imported garments crashed Blender (`EXCEPTION_ACCESS_VIOLATION` inside `C_BVHTree_FromPolygons`) with no Python traceback. The proxy build now runs `Mesh.validate()` after subdivision to repair corrupt geometry, verifies shrinkwrap output (vertex count stability and finite coordinates), preflights all proxy face indices against the vertex count, and wraps both `BVHTree.FromPolygons()` calls in try/except. Invalid geometry now produces a readable operator error instead of crashing Blender. Reproduced on Blender 4.0.2.
+- **Nightly update channel: invalid tag format error.** Users on the nightly channel who clicked "Try Again" saw "Error: Invalid tag format" because the tag validation regex (`_SAFE_TAG_RE`) only accepted semver tags like `v1.0.5` and rejected the literal `nightly` tag used by the nightly release channel. The regex now accepts both forms.
+- **Preserve-follow crash with pykdtree installed.** When the bundled pykdtree wheel was available, the preserve-follow step crashed with `AttributeError: 'KDTree' object has no attribute 'query'`. The fast path now always constructs a pykdtree `BatchKDTree` when `deps.PYKDTREE_AVAILABLE` is true, and isolates the Blender `mathutils.KDTree` to the fallback path only.
+
+### Upgrade path from nightly to stable
+
+Users currently on a nightly build who hit the "Invalid tag format" error can update cleanly:
+
+1. Uncheck **"Nightly Dev Build"** in the Update tab
+2. Click **Try Again**
+3. v1.0.6 is offered through the stable channel, downloads and installs automatically
+4. Re-enable **"Nightly Dev Build"** if desired — the fixed tag validation handles future nightly updates correctly
+
+### Internal improvements
+
+**CI pipeline**
+
+- CI now runs the full functional regression suite (7 suites, 240+ checks) against a three-version Blender matrix (3.6, 4.2, 5.1) on every pull request and push to non-`dev` branches. Previously CI ran only ruff and pytest with no Blender.
+- Stable release workflow expanded to the same three-version Blender matrix. Builds are validated against all supported Blender versions before a release artifact is published.
+- Nightly workflow refactored into a matrix verification job and a dedicated publish job. Each matrix leg now uploads a JSON artifact on failure for post-mortem inspection.
+
+**Testing infrastructure**
+
+- `run_all.py` gained a `--programmatic` mode. In this mode suites run without a Blender GUI session and produce a structured JSON report. Five suites converted: `fit_pipeline`, `vg_stability`, `suite_proximity`, `suite_armature_tools`, and `suite_proxy_hull`.
+- Added `tools/verify_run_all_json.py` -- a CLI tool and pytest suite that validates the `run_all` JSON output against a contract (expected suite count, minimum check count). Used by CI to catch silent suite failures.
+- `test_workflow_cicd_contract.py` and `test_deploy_tool.py` added to cover workflow structure and deploy tool behavior in pytest.
+
+**Code quality**
+
+- Added `pyproject.toml` with ruff configuration. All 22 pre-existing lint warnings resolved.
+
+---
+
 ## v1.0.5
 
 ### 3-tab panel layout
@@ -74,6 +111,7 @@ Enable **Tune Per Group** to assign each vertex group its own independent proxim
 
 ### Bug fixes
 
+- **Preserve-follow KDTree cache type with pykdtree fast path.** When the bundled pykdtree wheel is available, the preserve-follow step now always uses a pykdtree `BatchKDTree` in the fast path and isolates the Blender `mathutils.KDTree` to the fallback path. A previous version could cache a mathutils KDTree under `state._efit_cache['kd_follow']` before the fast path ran, causing a crash (`AttributeError: 'KDTree' object has no attribute 'query'`) on some installs.
 - **Vertex group selection stability.** All group name pickers (Preserve Group, Offset Fine Tuning, Exclusive Groups, Proximity Groups) now store the group name as a string rather than an integer index. Previously, adding, removing, or reordering vertex groups on the clothing mesh could silently remap a saved selection to a different group. String storage eliminates this index-drift entirely.
 - **Inside-body vertices with Proximity Falloff.** Vertices that penetrate the body mesh now always receive full proximity weight regardless of falloff curve settings. Previously, BVHTree returned a positive distance for inside-body vertices, placing them inside the falloff band and assigning them a reduced or zero weight — leaving them at their original penetrating position instead of being pulled out by the shrinkwrap displacement.
 - **Objects not in the active View Layer.** Fit Clothing now validates that both the body and clothing are in the active View Layer before running. Previously, if either object belonged to an excluded collection, Blender raised a `RuntimeError` with no actionable message.

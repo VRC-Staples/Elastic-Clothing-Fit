@@ -1,5 +1,6 @@
 # Elastic Clothing Fit
 
+[![CI](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/ci.yml/badge.svg)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/ci.yml)
 [![Nightly Dev Build](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/nightly.yml/badge.svg?branch=dev)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/actions/workflows/nightly.yml)
 [![Latest Release](https://img.shields.io/github/v/release/VRC-Staples/Elastic-Clothing-Fit?label=release)](https://github.com/VRC-Staples/Elastic-Clothing-Fit/releases/latest)
 [![Blender](https://img.shields.io/badge/Blender-3.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
@@ -29,10 +30,10 @@ For developer documentation, see the [Wiki](../../wiki).
 - **Post-fit options.** Optional shape correction and extra smoothing applied on finalize.
 - **Offset fine-tuning.** Per-vertex-group offset overrides (0-1000%) for precise local control of the body gap.
 - **Hull Fit.** Optional convex-hull proxy of the body fills concave regions (crotch, inner thigh, armpits) so clothing conforms to the body center instead of being pulled toward individual limbs.
-- **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, proximity falloff, and follow parameters under Advanced Settings.
+- **Advanced controls.** Smoothing passes, crease sensitivity, blend ranges, proximity falloff, and follow parameters under Advanced Settings. Preserve-follow is accelerated with a pykdtree-backed KDTree when available, and automatically falls back to Blender's KDTree on platforms where pykdtree is not installed.
 - **Undo support.** Remove Fit restores the original clothing at any time, including after a fit has been applied.
 - **Reset Defaults.** One-click reset of all sliders to default values.
-- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs.
+- **Auto update checker.** Checks for new releases on load and lets you download and install updates without leaving Blender. Offers to save your file and reopen it automatically after the update installs. Supports a nightly dev channel (toggle in the Update tab under Developer Mode) with automatic fallback to stable if needed.
 - **Mesh and armature tools.** Utilities for splitting meshes (by loose parts, material, or vertex group), joining meshes, displaying armature settings, and merging armature hierarchies.
 
 ## Installation

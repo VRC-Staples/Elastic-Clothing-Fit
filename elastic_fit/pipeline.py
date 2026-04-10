@@ -90,6 +90,16 @@ def _efit_create_proxy(context, cloth, p):
     _lt2 = np.empty(len(proxy.data.polygons), dtype=np.int32)
     proxy.data.polygons.foreach_get("loop_total", _lt2)
     actual_tris = int(np.sum(np.maximum(0, _lt2 - 2)))
+
+    # Repair any invalid geometry from the source mesh before downstream
+    # stages depend on stable topology.  validate() is a no-op on clean
+    # meshes; on broken imports it fixes winding, duplicate vertices, and
+    # other defects that can cause Blender's native BVH builder to crash.
+    if proxy.data.validate(verbose=False):
+        proxy.data.update()
+        print(f"[ECF] proxy geometry corrected by validate() on {cloth.name!r} -- "
+              "source mesh may have invalid geometry")
+
     return proxy, actual_tris, subdiv_levels
 
 
@@ -228,6 +238,26 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
     proxy.data.vertices.foreach_get("co", _buf_post)
     proxy_post = [mathutils.Vector(row) for row in _buf_post.reshape(-1, 3)]
 
+    # Sanity-check that shrinkwrap did not change vertex count or produce
+    # invalid coordinates.  Either condition would make the BVH build unsafe.
+    if len(proxy.data.vertices) != _n_proxy:
+        raise RuntimeError(
+            f"Proxy vertex count changed after shrinkwrap "
+            f"({_n_proxy} -> {len(proxy.data.vertices)}). "
+            "The clothing mesh may have invalid geometry."
+        )
+    if not np.isfinite(_buf_pre).all():
+        raise RuntimeError(
+            "Proxy contains non-finite coordinates before shrinkwrap. "
+            "The clothing mesh may have invalid geometry."
+        )
+    if not np.isfinite(_buf_post).all():
+        raise RuntimeError(
+            "Proxy contains non-finite coordinates after shrinkwrap. "
+            "Try Mesh > Clean Up > Merge by Distance and Degenerate Dissolve "
+            "on the clothing, or use a newer Blender version."
+        )
+
     # Zero out displacement for proxy vertices that are topologically closer
     # to a preserved clothing vertex than a fitted one, so deformation does
     # not bleed into the preserved region via BVH interpolation.
@@ -273,8 +303,36 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
 
     Returns (cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, bvh).
     """
-    proxy_faces = _build_face_list(proxy.data)
-    bvh         = BVHTree.FromPolygons(proxy_pre, proxy_faces)
+    # Use the canonical poly.vertices path at this BVH boundary rather than
+    # the foreach_get helper.  This is the same pattern used in the test
+    # suite and gives plain Python ints that every Blender version handles
+    # without ambiguity.  _build_face_list() remains available for other uses.
+    proxy_faces = [tuple(int(v) for v in poly.vertices) for poly in proxy.data.polygons]
+
+    # Preflight: verify all face indices are within the vertex array bounds.
+    # Blender 4.0 can crash natively on an out-of-bounds index; raising here
+    # converts that silent crash into a readable operator error.
+    n_proxy_verts = len(proxy_pre)
+    for face in proxy_faces:
+        for idx in face:
+            if idx < 0 or idx >= n_proxy_verts:
+                raise RuntimeError(
+                    f"Proxy BVH input invalid: face index {idx} is out of bounds "
+                    f"for {n_proxy_verts} vertices. "
+                    "The clothing mesh likely has corrupt geometry. "
+                    "Try Mesh > Clean Up > Merge by Distance and Degenerate Dissolve."
+                )
+
+    try:
+        bvh = BVHTree.FromPolygons(proxy_pre, proxy_faces)
+    except Exception as exc:
+        raise RuntimeError(
+            "Could not build the temporary surface map for fitting. "
+            "The clothing mesh may have invalid geometry. "
+            "Try Mesh > Clean Up > Merge by Distance and Degenerate Dissolve, "
+            "or update to a newer Blender version."
+        ) from exc
+
     proxy_polys = proxy.data.polygons
 
     # Bulk-read all cloth vertex positions once; both BVH query loops index
@@ -317,12 +375,18 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     body_key = (body.name, len(body.data.vertices), len(body.data.polygons))
     bvh_body = state._bvh_cache.get(body_key)
     if bvh_body is None:
-        body_faces = _build_face_list(body.data)
+        body_faces = [tuple(int(v) for v in poly.vertices) for poly in body.data.polygons]
         _bv_n   = len(body.data.vertices)
         _bv_buf = np.empty(_bv_n * 3, dtype=np.float64)
         body.data.vertices.foreach_get("co", _bv_buf)
         body_verts = [(_bv_buf[i*3], _bv_buf[i*3+1], _bv_buf[i*3+2]) for i in range(_bv_n)]
-        bvh_body   = BVHTree.FromPolygons(body_verts, body_faces)
+        try:
+            bvh_body = BVHTree.FromPolygons(body_verts, body_faces)
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not build the surface map for the body mesh. "
+                "The body mesh may have invalid geometry."
+            ) from exc
         state._bvh_cache.clear()
         state._bvh_cache[body_key] = bvh_body
 
@@ -498,18 +562,6 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     if strength <= 0.0:
         return
 
-    # Lazily build and cache the KDTree on first call.
-    # Rest-pose positions are used so neighbor selection stays stable
-    # as the mesh deforms across slider changes.
-    kd_follow = state._efit_cache.get('kd_follow')
-    if kd_follow is None:
-        kd_follow = KDTree(len(fitted_indices))
-        for i, vi in enumerate(fitted_indices):
-            # Rest-pose coords keep neighbor lookup stable across deformation.
-            kd_follow.insert(all_originals[vi], i)
-        kd_follow.balance()
-        state._efit_cache['kd_follow'] = kd_follow
-
     K_follow = min(p.follow_neighbors, len(fitted_indices))
 
     n_verts = len(cloth.data.vertices)
@@ -525,7 +577,8 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
         # --- Fast path: pykdtree batch query ---
         # Build/reuse a pykdtree from rest-pose fitted positions (float32).
         kd_follow = state._efit_cache.get('kd_follow')
-        if kd_follow is None:
+        # Guard against stale mathutils KDTree from older sessions.
+        if kd_follow is None or not isinstance(kd_follow, deps.BatchKDTree):
             fitted_rest = all_originals[fi_arr].astype(np.float32)
             kd_follow = deps.BatchKDTree(fitted_rest)
             state._efit_cache['kd_follow'] = kd_follow
@@ -553,7 +606,7 @@ def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_
     else:
         # --- Fallback path: sequential mathutils.KDTree ---
         kd_follow = state._efit_cache.get('kd_follow')
-        if kd_follow is None:
+        if kd_follow is None or not isinstance(kd_follow, KDTree):
             kd_follow = KDTree(len(fitted_indices))
             for i, vi in enumerate(fitted_indices):
                 kd_follow.insert(all_originals[vi], i)

@@ -24,7 +24,7 @@
 bl_info = {
     "name": ".Staples. Elastic Clothing Fit",
     "author": ".Staples.",
-    "version": (1, 0, 5),
+    "version": (1, 0, 6),
     "blender": (3, 2, 0),
     "location": "View3D > Sidebar > .Staples. Elastic Fit",
     "description": "Elastic, UV-safe clothing fitting with live preview and per-region offset control",

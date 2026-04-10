@@ -10,7 +10,6 @@ Exit codes:
 """
 import argparse
 import json
-import os
 import pathlib
 import subprocess
 import sys
@@ -134,6 +133,11 @@ def main():
         "--json-out", metavar="FILE",
         help="Also write JSON output to this file",
     )
+    parser.add_argument(
+        "--programmatic",
+        action="store_true",
+        help="Create all geometry programmatically (no .blend files required)",
+    )
     args = parser.parse_args()
 
     blend_root = str(pathlib.Path(args.blend_root).resolve())
@@ -205,6 +209,8 @@ def main():
             # Proximity is conditionally skipped when Fit Pipeline had failures.
             if name == "Proximity" and fit_pipeline_failed:
                 extra = ["--skip"]
+            elif args.programmatic and needs_blend_root:
+                extra = ["--programmatic"]
             elif needs_blend_root:
                 extra = ["--blend-root", blend_root]
             else:
@@ -223,7 +229,7 @@ def main():
                 "failures": failures,
             })
 
-            if name in SCREENSHOT_BLEND:
+            if not args.programmatic and name in SCREENSHOT_BLEND:
                 blend_file = SCREENSHOT_BLEND[name]
                 blend_abs = str(pathlib.Path(blend_root) / "tests" / blend_file)
                 screenshot_dir, err = _run_screenshots(blender, blend_abs, blend_root)

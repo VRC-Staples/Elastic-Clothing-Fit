@@ -1,15 +1,15 @@
-name: Nightly Dev Build
+name: CI
 
 on:
-  schedule:
-    - cron: '0 2 * * *'   # 2am UTC every day
   push:
     branches:
-      - dev
-  workflow_dispatch:       # manual trigger for testing
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  nightly:
+  ci:
     runs-on: ubuntu-latest
 
     strategy:
@@ -19,26 +19,21 @@ jobs:
           - blender_version: "5.1.0"
             blender_dir: "blender-5.1.0-linux-x64"
             url_subdir: "Blender5.1"
-            primary: true
           - blender_version: "4.2.19"
             blender_dir: "blender-4.2.19-linux-x64"
             url_subdir: "Blender4.2"
-            primary: false
           - blender_version: "3.6.23"
             blender_dir: "blender-3.6.23-linux-x64"
             url_subdir: "Blender3.6"
-            primary: false
 
     env:
       BLENDER_VERSION: ${{ matrix.blender_version }}
       BLENDER_DIR: ${{ matrix.blender_dir }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -73,7 +68,7 @@ jobs:
       - name: Build and test
         run: |
           BLENDER_BIN="$HOME/blender-cache/${{ env.BLENDER_DIR }}/blender"
-          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build --nightly
+          xvfb-run python tools/deploy.py --blender "$BLENDER_BIN" build
 
       - name: Run functional regression suites (programmatic JSON)
         id: functional-run-all
@@ -106,57 +101,3 @@ jobs:
 
       - name: Static analysis — updater thread safety
         run: python tests/verify_updater.py
-
-      - name: Upload nightly zip artifact
-        if: ${{ success() && matrix.primary }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-zip
-          path: ElasticClothingFit-v*-nightly-*.zip
-          if-no-files-found: error
-          retention-days: 1
-
-  publish-nightly:
-    runs-on: ubuntu-latest
-    needs: [nightly]
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download nightly zip artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: nightly-zip
-          path: dist
-
-      - name: Publish rolling nightly release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ZIP=$(ls dist/ElasticClothingFit-v*-nightly-*.zip 2>/dev/null | head -1)
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: Expected nightly zip artifact was not downloaded."
-            exit 1
-          fi
-
-          BLENDER_MIN="$(python tools/deploy.py meta --field blender-min)"
-          if [ -z "$BLENDER_MIN" ]; then
-            echo "ERROR: Could not derive BLENDER_MIN from addon metadata."
-            exit 1
-          fi
-
-          gh release delete nightly --yes 2>/dev/null || true
-          git push origin :refs/tags/nightly 2>/dev/null || true
-
-          RECENT_COMMITS=$(git log -5 --pretty=format:"- %s" HEAD)
-          NOTES=$(printf '> [!WARNING]\n> This is a nightly development build. It may contain bugs and instability.\n\nAuto-built from `dev` @ %s\n\nAuto-build Run Status: https://github.com/%s/actions/runs/%s\n\n### Recent changes\n%s\n\n[View all commits](https://github.com/%s/commits/dev)\n\nBLENDER_MIN=%s' \
-            '${{ github.sha }}' '${{ github.repository }}' '${{ github.run_id }}' "$RECENT_COMMITS" '${{ github.repository }}' "$BLENDER_MIN")
-
-          gh release create nightly "$ZIP" \
-            --title "Nightly Dev Build $(date -u '+%Y-%m-%d')" \
-            --notes "$NOTES" \
-            --prerelease \
-            --target dev
