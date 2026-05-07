@@ -15,7 +15,7 @@ A **video tutorial** is available on the [Jinxxy product page](https://jinxxy.co
 
 See [PATCH_NOTES.md](PATCH_NOTES.md) for version history and change details.
 
-Policy regarding the use of Agentic AI Tooling view [AIPOLICY.md](AIPOLICY.md) for more information.
+Policy regarding the use of Agentic AI Tooling view [AIPOLICY.MD](AIPOLICY.MD) for more information.
 
 For developer documentation, see the [Wiki](../../wiki).
 
