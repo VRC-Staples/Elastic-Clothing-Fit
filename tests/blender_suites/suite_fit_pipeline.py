@@ -11,6 +11,8 @@
 import sys
 import os
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(__file__))
 from _programmatic_geometry import (
     clear_programmatic_objects,
@@ -110,9 +112,12 @@ with bpy.context.temp_override(window=_win, area=_area, region=_region):
     result = bpy.ops.efit.fit()
 _assert_equal(result, {'FINISHED'}, "efit.fit returned FINISHED")
 _assert_true(bool(state._efit_cache),          "cache populated after fit")
-_assert_true('cloth_displacements' in state._efit_cache, "cloth_displacements cached")
-_assert_true('fitted_indices'      in state._efit_cache, "fitted_indices cached")
-_assert_true('cloth_body_distances' in state._efit_cache, "cloth_body_distances cached")
+prepared = state._efit_cache['prepared']
+_assert_true(np.isfinite(prepared.originals).all(), "original coordinates are finite")
+_assert_true(np.isfinite(prepared.displacements).all(), "fitted displacements are finite")
+_assert_true(prepared.body_distances.shape == (len(prepared.fitted_indices),)
+             and np.isfinite(prepared.body_distances).all(),
+             "body distances have one finite value per fitted row")
 print("  Cache keys:", list(state._efit_cache.keys()))
 
 # ============================================================
@@ -144,8 +149,6 @@ print("\n=== STEP 5: Verify no clipping (ray cast inside-test) ===")
 from mathutils.bvhtree import BVHTree
 import mathutils
 
-import numpy as np
-
 # Maximum acceptable fraction of fitted vertices that may be inside the body.
 # 10% tolerance reflects the test mesh's baseline clipping characteristics --
 # the ECF_Test.blend crotch region has inward-pointing normals that produce
@@ -163,8 +166,8 @@ body_verts = [v.co.copy() for v in body.data.vertices]
 body_faces = [tuple(f.vertices) for f in body.data.polygons]
 bvh        = BVHTree.FromPolygons(body_verts, body_faces)
 
-fitted_indices = state._efit_cache.get("fitted_indices", [])
-body_normals   = state._efit_cache.get("cloth_body_normals", None)
+fitted_indices = state._efit_cache['prepared'].fitted_indices
+body_normals   = state._efit_cache['prepared'].body_normals
 
 _assert_true(len(fitted_indices) > 0, "fitted_indices non-empty in cache")
 _assert_true(body_normals is not None and len(body_normals) > 0,
@@ -258,6 +261,124 @@ _assert_true(result == {'FINISHED'}, "efit.remove returned FINISHED")
 restored = [v.co.copy() for v in cloth.data.vertices]
 changed = sum(1 for a, b in zip(snapshot_after_fit, restored) if (a - b).length > 1e-6)
 _assert_true(changed > 0, f"at least one vertex restored to pre-fit position ({changed} changed)")
+
+print("\n=== STEP 8: Exclusive fitting keeps unselected vertices fixed ===")
+p.fit_mode = 'EXCLUSIVE'
+p.exclusive_groups.clear()
+exclusive_group = cloth.vertex_groups.new(name='ECF_ExclusiveRegression')
+selected = [vertex.index for vertex in cloth.data.vertices if vertex.index % 2 == 0]
+frozen = [vertex.index for vertex in cloth.data.vertices if vertex.index % 2 != 0]
+exclusive_group.add(selected, 1., 'REPLACE')
+entry = p.exclusive_groups.add()
+entry.group_name = exclusive_group.name
+p.fit_amount = 0.67
+p.follow_strength = 1.
+p.follow_neighbors = 2
+p.use_proximity_falloff = False
+original = np.array([vertex.co[:] for vertex in cloth.data.vertices])
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
+    result = bpy.ops.efit.fit()
+_assert_equal(result, {'FINISHED'}, "exclusive fit returned FINISHED")
+initial = np.array([vertex.co[:] for vertex in cloth.data.vertices])
+_assert_true(np.array_equal(initial[frozen], original[frozen]),
+             "exclusive initial fit keeps frozen coordinates exact with follow enabled")
+_assert_true(np.any(initial[selected] != original[selected]), "exclusive fit moves selected vertices")
+p.fit_amount = 0.72
+preview_coordinates = np.array([vertex.co[:] for vertex in cloth.data.vertices])
+_assert_true(np.array_equal(preview_coordinates[frozen], original[frozen]),
+             "exclusive preview keeps frozen coordinates exact with follow enabled")
+p.fit_amount = 0.67
+roundtrip = np.array([vertex.co[:] for vertex in cloth.data.vertices])
+_assert_true(np.array_equal(roundtrip[frozen], original[frozen]),
+             "exclusive slider round trip keeps frozen coordinates exact")
+with bpy.context.temp_override(window=_win, area=_area, region=_region):
+    result = bpy.ops.efit.preview_cancel()
+_assert_equal(result, {'FINISHED'}, "exclusive cancel returned FINISHED")
+_assert_true(not state._efit_cache, "exclusive cancel clears the session")
+restored = np.array([vertex.co[:] for vertex in cloth.data.vertices])
+_assert_true(np.array_equal(restored, original), "exclusive cancel restores all original coordinates exactly")
+
+from types import SimpleNamespace
+from elastic_fit import deps, preview
+from elastic_fit.deformation import PreparedFit
+
+
+def _check_native_preserve_follow(backend_name, batch_tree):
+    original = np.array([[2., 0., 0.], [10., 20., 30.], [1., 0., 0.],
+                         [0., 0., 0.], [30., 40., 50.]])
+    prepared = PreparedFit(
+        original, np.array([[0., 0., 2.], [0., 0., 4.]]), [3, 0],
+        np.empty((0, 2), dtype=np.int32), np.array([[0., 1., 0.], [0., 1., 0.]]),
+        preserved_indices=[2], original_offset=0.25,
+        offset_group_weights={'A': {3: 1., 0: 1.}})
+    settings = SimpleNamespace(
+        fit_amount=1., offset=0.25, disp_smooth_passes=0,
+        follow_neighbors=2, follow_strength=0.5, fit_mode='FULL',
+        offset_groups=[SimpleNamespace(group_name='A', influence=200.)])
+    coordinates = prepared.evaluate(settings, batch_tree=batch_tree)
+    _assert_true(np.array_equal(coordinates[[3, 0]], [[0., 0.25, 2.], [2., 0.25, 4.]]),
+                 f"{backend_name}: fitted vertices receive displacement and group offset")
+    _assert_true(np.array_equal(coordinates[2], [1., 0., 1.5]),
+                 f"{backend_name}: preserved follows sparse neighbors but not group offsets (got {coordinates[2].tolist()})")
+    _assert_true(np.array_equal(coordinates[[1, 4]], original[[1, 4]]),
+                 f"{backend_name}: unrelated vertices stay exact")
+
+    # Below half the float32 spacing at x=32, initial rounding erases each delta.
+    epsilon = 3 * 2. ** -21
+    original = np.array([[32., 1., 0.], [32., -1., 0.], [0., 0., 0.]])
+    previous_cache = state._efit_cache
+    previous_error = state._efit_last_error
+    previous_backend_available = deps.PYKDTREE_AVAILABLE
+    mesh = bpy.data.meshes.new('ECF_FollowPrecision')
+    mesh.from_pydata(original.tolist(), [], [])
+    precision_cloth = bpy.data.objects.new('ECF_FollowPrecision', mesh)
+    bpy.context.collection.objects.link(precision_cloth)
+    try:
+        deps.PYKDTREE_AVAILABLE = batch_tree is not None
+        for group_offsets in (False, True):
+            groups = [SimpleNamespace(group_name='A', influence=200.)] if group_offsets else []
+            settings = SimpleNamespace(
+                fit_amount=1., offset=epsilon, disp_smooth_passes=0,
+                follow_neighbors=2, follow_strength=1., fit_mode='FULL',
+                offset_groups=groups, use_proximity_falloff=False)
+            prepared = PreparedFit(
+                original, np.array([[epsilon, 0., 0.], [epsilon, 0., 0.]]), [0, 1],
+                np.empty((0, 2), dtype=np.int32), np.array([[1., 0., 0.], [1., 0., 0.]]),
+                preserved_indices=[2], original_offset=epsilon,
+                offset_group_weights={'A': {0: 1., 1: 1.}} if group_offsets else {})
+            initial = prepared.evaluate(settings, batch_tree=batch_tree, initial_fit=True)
+            mesh.vertices.foreach_set('co', initial.ravel())
+            mesh.update()
+            observed = np.array([vertex.co[:] for vertex in mesh.vertices])
+            label = f"{backend_name}, group offsets={group_offsets}"
+            _assert_true(np.array_equal(observed, original),
+                         f"{label}: initial follow keeps rounded-away movement zero (preserved {observed[2].tolist()})")
+            state._efit_cache = {'cloth_name': precision_cloth.name, 'prepared': prepared}
+            state._efit_last_error = ''
+            preview._efit_preview_update(SimpleNamespace(
+                scene=SimpleNamespace(efit_props=settings), screen=None))
+            _assert_true(not state._efit_last_error,
+                         f"{label}: preview completes without error ({state._efit_last_error})")
+            observed = np.array([vertex.co[:] for vertex in mesh.vertices])
+            _assert_true(np.allclose(observed[2], [epsilon, 0., 0.], rtol=2e-7, atol=0.),
+                         f"{label}: preview follow retains its small displacement (preserved {observed[2].tolist()})")
+            expected_x = 32. + 2. ** -18 if group_offsets else 32.
+            _assert_true(np.array_equal(observed[:2, 0], [expected_x, expected_x]),
+                         f"{label}: fitted preview coordinates retain the group-offset mesh boundary")
+    finally:
+        state._efit_cache = previous_cache
+        state._efit_last_error = previous_error
+        deps.PYKDTREE_AVAILABLE = previous_backend_available
+        bpy.data.objects.remove(precision_cloth, do_unlink=True)
+        bpy.data.meshes.remove(mesh)
+
+
+print("\n=== Native preserve-follow contracts ===")
+_check_native_preserve_follow('mathutils', None)
+if deps.PYKDTREE_AVAILABLE:
+    _check_native_preserve_follow('pykdtree', deps.BatchKDTree)
+else:
+    print('[SKIP] Native preserve-follow batch checks: pykdtree is unavailable')
 
 # ============================================================
 # Exit

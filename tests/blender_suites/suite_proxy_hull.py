@@ -154,18 +154,14 @@ hull_objects = [o for o in bpy.data.objects if "HullProxy" in o.name]
 _assert_equal(len(hull_objects), 0, "no EFit_HullProxy object leaks into scene during preview")
 
 # Fitted vertices must have actually moved from their original positions.
-originals = state._efit_cache.get("all_originals")
-fitted = state._efit_cache.get("fitted_indices") or []
-vi_to_pos = {int(vi): i for i, vi in enumerate(fitted)}
-originals_len = len(originals) if originals is not None else 0
+prepared = state._efit_cache['prepared']
+originals = prepared.originals
+fitted = prepared.fitted_indices
 
 moved = 0
 for vi in fitted:
     idx = int(vi)
-    pos = vi_to_pos.get(idx)
-    if pos is None or originals is None or pos >= originals_len:
-        continue
-    arr_row = mathutils.Vector(originals[pos])
+    arr_row = mathutils.Vector(originals[idx])
     if (cloth.data.vertices[idx].co - arr_row).length > 1e-6:
         moved += 1
 

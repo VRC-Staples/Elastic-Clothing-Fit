@@ -113,8 +113,8 @@ if result != {'FINISHED'}:
     sys.exit(1)
 
 c = state._efit_cache
-fitted_indices    = c.get('fitted_indices', [])
-preserved_indices = c.get('preserved_indices', [])
+fitted_indices    = c['prepared'].fitted_indices
+preserved_indices = c['prepared'].preserved_indices
 print(f"  fitted_indices:    {len(fitted_indices)}")
 print(f"  preserved_indices: {len(preserved_indices)}")
 print(f"  follow_neighbors:  {p.follow_neighbors}")
@@ -180,8 +180,8 @@ results_by_k = {}
 
 for K in [4, 8, 16, 32]:
     p.follow_neighbors = K
-    # Clear kd_follow from cache to force rebuild with new K
-    state._efit_cache.pop('kd_follow', None)
+    # Force a cold tree before warm-up.
+    state._efit_cache['prepared'].follow_tree = None
     # Warm up
     p.fit_amount = max(0.0, min(1.0, p.fit_amount + 0.01))
 

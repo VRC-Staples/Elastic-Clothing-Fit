@@ -12,6 +12,13 @@ artifacts/
 mock-update-server.ps1
 dev-install.ps1
 Thumbs.db
+AGENTS.md
+agents.md
+# Keep the local agent CLI, inventories, guide, and tests out of commits.
+/bin/agent-cli*
+/tools/agent_cli*.py
+/tools/AGENT_CLI.md
+/tests/test_agent_cli*.py
 *.swp
 *.swo
 *~

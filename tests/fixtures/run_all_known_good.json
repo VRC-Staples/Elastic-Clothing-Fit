@@ -1,53 +1,79 @@
 {
+  "setup": {
+    "returncode": 0,
+    "timed_out": false,
+    "error": null
+  },
   "suites": [
     {
       "name": "UX Tabs",
       "passed": 37,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     },
     {
       "name": "Fit Pipeline",
       "passed": 19,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     },
     {
       "name": "Proximity",
       "passed": 49,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     },
     {
       "name": "Armature Tools",
       "passed": 84,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     },
     {
       "name": "Mesh Tools",
       "passed": 21,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     },
     {
       "name": "Proxy Hull",
       "passed": 12,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     },
     {
       "name": "VG Stability",
       "passed": 25,
       "failed": 0,
       "skipped": false,
-      "failures": []
+      "failures": [],
+      "returncode": 0,
+      "timed_out": false,
+      "skip_reason": null
     }
   ],
   "total_passed": 247,

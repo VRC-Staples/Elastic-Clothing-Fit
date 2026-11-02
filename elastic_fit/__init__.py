@@ -219,6 +219,7 @@ def register():
     state.register_handler('proximity_group_update',            _on_proximity_group_prop_update)
     state.register_handler('proximity_group_name_update',       _on_proximity_group_name_update)
 
+    updater.activate()
     updater.check_for_update()
 
     # Prime the nightly content cache so panels.py _draw_update_tab does not
@@ -232,7 +233,7 @@ def register():
 
 
 def unregister():
-    updater._cancel_event.set()
+    updater.shutdown()
     state._bvh_cache.clear()
     for name in ('tab_change', 'preview_prop_update', 'smooth_mod_update',
                  'offset_group_influence_update', 'offset_group_name_update',

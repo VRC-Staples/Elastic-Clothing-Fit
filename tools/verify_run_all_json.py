@@ -47,6 +47,17 @@ def verify_payload(
     if not isinstance(suites, list):
         return ["Invalid type for suites: expected list"]
 
+    setup = payload.get("setup")
+    if not isinstance(setup, dict):
+        errors.append("Missing or invalid setup execution evidence")
+    else:
+        if type(setup.get("returncode")) is not int or setup["returncode"] != 0:
+            errors.append("Setup did not exit successfully")
+        if setup.get("timed_out") is not False:
+            errors.append("Setup timed out or timeout evidence is missing")
+        if setup.get("error") is not None:
+            errors.append("Setup reported an execution error")
+
     total_passed = payload.get("total_passed")
     total_failed = payload.get("total_failed")
 
@@ -88,6 +99,25 @@ def verify_payload(
             errors.append(f"{prefix}.failed must be a non-negative int")
         else:
             suite_fail_sum += failed
+
+        if type(suite.get("returncode")) is not int or suite["returncode"] != 0:
+            errors.append(f"{prefix} did not exit successfully or returncode is missing")
+        if suite.get("timed_out") is not False:
+            errors.append(f"{prefix} timed out or timeout evidence is missing")
+        if _is_non_negative_int(passed) and passed == 0:
+            errors.append(f"{prefix} completed no passing checks")
+        skipped = suite.get("skipped")
+        if not isinstance(skipped, bool):
+            errors.append(f"{prefix}.skipped must be a bool")
+        elif skipped:
+            reason = suite.get("skip_reason")
+            if not isinstance(reason, str) or not reason.strip():
+                errors.append(f"{prefix} skipped checks without a reason")
+        failures = suite.get("failures")
+        if not isinstance(failures, list) or not all(isinstance(line, str) for line in failures):
+            errors.append(f"{prefix}.failures must be a list of strings")
+        elif _is_non_negative_int(failed) and len(failures) != failed:
+            errors.append(f"{prefix}.failures does not match the failed check count")
 
     if len(suites) != expected_suites:
         errors.append(

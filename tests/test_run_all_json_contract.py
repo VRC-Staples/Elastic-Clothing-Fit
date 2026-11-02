@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from tools.verify_run_all_json import DEFAULT_REQUIRED_SUITES, verify_json_file, verify_payload
 
 
@@ -139,3 +141,36 @@ def test_rejects_missing_suites_key():
     )
 
     assert errors == ["Missing required key: suites"]
+
+
+@pytest.mark.parametrize('change', [
+    'nonzero-exit', 'timeout', 'missing-exit', 'boolean-exit',
+    'empty-required-suite', 'failed-setup', 'missing-setup', 'skip-without-reason',
+])
+def test_execution_evidence_cannot_be_hidden_by_passing_totals(change):
+    payload = _read_known_good_payload()
+    payload['setup'] = {'returncode': 0, 'timed_out': False, 'error': None}
+    for suite in payload['suites']:
+        suite.update(returncode=0, timed_out=False, skip_reason=None)
+    arguments = {'expected_suites': 7, 'min_checks': 240,
+                 'required_suite_names': DEFAULT_REQUIRED_SUITES}
+    assert verify_payload(payload, **arguments) == []
+    suite = payload['suites'][0]
+    if change == 'nonzero-exit':
+        suite['returncode'] = 1
+    elif change == 'timeout':
+        suite['timed_out'] = True
+    elif change == 'missing-exit':
+        suite.pop('returncode')
+    elif change == 'boolean-exit':
+        suite['returncode'] = False
+    elif change == 'empty-required-suite':
+        payload['suites'][1]['passed'] += suite['passed']
+        suite['passed'] = 0
+    elif change == 'failed-setup':
+        payload['setup']['returncode'] = 1
+    elif change == 'missing-setup':
+        payload.pop('setup')
+    elif change == 'skip-without-reason':
+        suite['skipped'] = True
+    assert verify_payload(payload, **arguments)

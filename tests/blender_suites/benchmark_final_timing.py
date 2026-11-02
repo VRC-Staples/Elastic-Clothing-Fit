@@ -94,7 +94,7 @@ if result != {'FINISHED'}:
     sys.exit(1)
 
 c = state._efit_cache
-fitted_indices = c.get('fitted_indices', [])
+fitted_indices = c['prepared'].fitted_indices
 print(f"  fitted_indices: {len(fitted_indices)}")
 print(f"  Total vertices: {len(cloth.data.vertices)}")
 
@@ -160,7 +160,7 @@ print("\n=== STEP 3: Measure with preserve ON (follow_strength=1.0, K=32) ===")
 p.follow_strength  = 1.0
 p.follow_neighbors = 32
 # Clear KDTree cache so it rebuilds with the correct K
-state._efit_cache.pop('kd_follow', None)
+state._efit_cache['prepared'].follow_tree = None
 # Warm up (rebuilds KDTree on first call)
 p.fit_amount = max(0.0, min(1.0, p.fit_amount + 0.01))
 

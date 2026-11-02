@@ -14,6 +14,8 @@
 import sys
 import os
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(__file__))
 from _programmatic_geometry import (
     clear_programmatic_objects,
@@ -71,9 +73,9 @@ def _assert_equal(actual, expected, label):
         _failed += 1
     return ok
 
-def _assert_all_in_range(mapping, lo, hi, label):
+def _assert_all_in_range(values, lo, hi, label):
     global _failed
-    bad = {k: v for k, v in mapping.items() if not (lo <= v <= hi)}
+    bad = {row: value for row, value in enumerate(values) if not (lo <= value <= hi)}
     ok = len(bad) == 0
     status = "PASS" if ok else "FAIL"
     extra = "" if ok else f"  ({len(bad)} out of range, e.g. {list(bad.items())[:3]})"
@@ -137,27 +139,31 @@ _assert_equal(result, {'FINISHED'}, "efit.fit returned FINISHED")
 
 print("\n=== STEP 2 (cont): Verify cloth_body_distances in cache ===")
 c = state._efit_cache
-_assert_true('cloth_body_distances' in c, "cloth_body_distances key present in cache")
-_assert_true('proximity_weights'    in c, "proximity_weights key present in cache")
+prepared = c['prepared']
+_assert_true(prepared.body_distances.shape == (len(prepared.fitted_indices),)
+             and np.isfinite(prepared.body_distances).all(),
+             "body distances have one finite value per fitted row")
+_assert_true(prepared.proximity_weights.shape == (len(prepared.fitted_indices),),
+             "proximity weights have one value per fitted row")
 
-distances = c.get('cloth_body_distances', {})
+distances = prepared.body_distances
 _assert_true(len(distances) > 0, f"cloth_body_distances non-empty ({len(distances)} entries)")
 
-all_non_negative = all(v >= 0.0 for v in distances.values())
+all_non_negative = all(v >= 0.0 for v in distances)
 _assert_true(all_non_negative, "all distances >= 0.0")
-print(f"    Distance range: [{min(distances.values()):.4f}, {max(distances.values()):.4f}] m")
+print(f"    Distance range: [{min(distances):.4f}, {max(distances):.4f}] m")
 
 # ============================================================
 # STEP 3: Verify proximity_weights all in [0, 1]
 # ============================================================
 print("\n=== STEP 3: Verify proximity_weights in [0, 1] ===")
-weights = c.get('proximity_weights') or {}
+weights = c['prepared'].proximity_weights
 _assert_true(weights is not None, "proximity_weights is not None")
 _assert_true(len(weights) > 0, f"proximity_weights non-empty ({len(weights)} entries)")
 _assert_all_in_range(weights, 0.0, 1.0, "all proximity weights in [0.0, 1.0]")
 
-w_min = min(weights.values()) if weights else None
-w_max = max(weights.values()) if weights else None
+w_min = min(weights, default=0.)
+w_max = max(weights, default=0.)
 print(f"    Weight range: [{w_min:.4f}, {w_max:.4f}]")
 
 # ============================================================
@@ -170,8 +176,8 @@ prev_weights = None
 for curve in curves:
     p.proximity_curve = curve
     # The update callback fires _efit_preview_update which recomputes weights.
-    current = state._efit_cache.get('proximity_weights') or {}
-    current_vals = tuple(sorted(current.values()))
+    current = state._efit_cache['prepared'].proximity_weights
+    current_vals = tuple(sorted(current))
 
     _assert_true(len(current) > 0, f"curve={curve!r} weights non-empty ({len(current)} entries)")
     _assert_all_in_range(current, 0.0, 1.0, f"curve={curve!r} weights all in [0, 1]")
@@ -181,7 +187,7 @@ for curve in curves:
         _assert_true(differs, f"curve={curve!r} weights differ from previous curve")
 
     prev_weights = current_vals
-    print(f"    {curve}: min={min(current.values(), default=0):.4f}, max={max(current.values(), default=0):.4f}")
+    print(f"    {curve}: min={min(current, default=0):.4f}, max={max(current, default=0):.4f}")
 
 # ============================================================
 # STEP 5: Adjust start/end, verify preview updates
@@ -229,11 +235,12 @@ p.use_proximity_falloff = False
 
 # Cache should still have cloth_body_distances (they were computed at fit time).
 c = state._efit_cache
-_assert_true('cloth_body_distances' in c, "cloth_body_distances still in cache after disable")
+_assert_true(c['prepared'].body_distances.shape == (len(c['prepared'].fitted_indices),),
+             "body distances still cover fitted rows after disable")
 
 # proximity_weights after disable may be either None (legacy behavior)
-# or a retained cache map in newer behavior.
-pw = c.get('proximity_weights')
+# or a retained cache array in newer behavior.
+pw = c['prepared'].proximity_weights
 if pw is None:
     _assert_true(True, "proximity_weights is None after disable")
 else:
@@ -269,7 +276,7 @@ with bpy.context.temp_override(window=_win, area=_area):
 _assert_equal(result, {'FINISHED'}, "STEP 7: efit.fit returned FINISHED")
 
 c = state._efit_cache
-pw = c.get('proximity_weights') or {}
+pw = c['prepared'].proximity_weights
 _assert_true(len(pw) > 0, f"STEP 7: proximity_weights non-empty ({len(pw)} entries)")
 _assert_all_in_range(pw, 0.0, 1.0, "STEP 7: all weights in [0, 1]")
 
@@ -303,7 +310,7 @@ else:
     _assert_equal(result, {'FINISHED'}, "STEP 8: efit.fit returned FINISHED")
 
     c = state._efit_cache
-    pw = c.get('proximity_weights') or {}
+    pw = c['prepared'].proximity_weights
     _assert_true(len(pw) > 0, f"STEP 8: proximity_weights non-empty ({len(pw)} entries)")
     _assert_all_in_range(pw, 0.0, 1.0, "STEP 8: all weights in [0, 1]")
 
@@ -311,9 +318,10 @@ else:
     vg_idx = cloth_obj.vertex_groups[vg1].index
     in_group    = {v.index for v in cloth_obj.data.vertices
                    if any(g.group == vg_idx and g.weight > 0.0 for g in v.groups)}
-    fitted_set  = set(c.get('fitted_indices', []))
+    fitted_set  = c['prepared'].fitted_set
     ungrouped   = fitted_set - in_group
-    ungrouped_non_one = {vi: pw[vi] for vi in ungrouped if vi in pw and abs(pw[vi] - 1.0) > 1e-6}
+    rows = c['prepared'].row_of_vertex
+    ungrouped_non_one = {vi: pw[rows[vi]] for vi in ungrouped if abs(pw[rows[vi]] - 1.0) > 1e-6}
     _assert_true(len(ungrouped_non_one) == 0,
                  f"STEP 8: ungrouped vertices all have weight 1.0 ({len(ungrouped_non_one)} violations)")
 
@@ -343,7 +351,7 @@ else:
         _assert_equal(result, {'FINISHED'}, "STEP 9: efit.fit returned FINISHED")
 
         c = state._efit_cache
-        pw = c.get('proximity_weights') or {}
+        pw = c['prepared'].proximity_weights
         _assert_true(len(pw) > 0, f"STEP 9: proximity_weights non-empty ({len(pw)} entries)")
         _assert_all_in_range(pw, 0.0, 1.0, "STEP 9: all weights in [0, 1]")
 
@@ -352,7 +360,8 @@ else:
         in_group2 = {v.index for v in cloth_obj.data.vertices
                      if any(g.group == vg2_idx and g.weight > 0.0 for g in v.groups)}
         ungrouped2 = fitted_set - in_group - in_group2
-        ungrouped2_non_one = {vi: pw[vi] for vi in ungrouped2 if vi in pw and abs(pw[vi] - 1.0) > 1e-6}
+        rows = c['prepared'].row_of_vertex
+        ungrouped2_non_one = {vi: pw[rows[vi]] for vi in ungrouped2 if abs(pw[rows[vi]] - 1.0) > 1e-6}
         _assert_true(len(ungrouped2_non_one) == 0,
                      f"STEP 9: ungrouped vertices all weight 1.0 ({len(ungrouped2_non_one)} violations)")
 
@@ -373,13 +382,54 @@ else:
     _assert_equal(result, {'FINISHED'}, "STEP 10: efit.fit returned FINISHED")
 
     c = state._efit_cache
-    pw = c.get('proximity_weights') or {}
+    pw = c['prepared'].proximity_weights
     _assert_true(len(pw) > 0, f"STEP 10: proximity_weights non-empty after group removal ({len(pw)} entries)")
     _assert_all_in_range(pw, 0.0, 1.0, "STEP 10: all weights in [0, 1] after group removal")
 
     with bpy.context.temp_override(window=_win, area=_area):
         bpy.ops.efit.preview_cancel()
     _assert_true(not state._efit_cache, "STEP 10: cache cleared after cancel")
+
+print("\n=== STEP 11: Removing one group before the first preview refreshes its former vertices ===")
+p.fit_mode = 'FULL'
+p.preserve_group = ''
+p.proximity_groups.clear()
+p.use_proximity_falloff = True
+p.use_proximity_group_tuning = True
+cloth_obj = p.clothing_obj
+first_indices = [vertex.index for vertex in cloth_obj.data.vertices if vertex.index % 2 == 0]
+second_indices = [vertex.index for vertex in cloth_obj.data.vertices if vertex.index % 2 != 0]
+for name, indices in [('ECF_ProximityRemovalFirst', first_indices), ('ECF_ProximityRemovalSecond', second_indices)]:
+    group = cloth_obj.vertex_groups.new(name=name)
+    group.add(indices, 1., 'REPLACE')
+    entry = p.proximity_groups.add()
+    entry.group_name = group.name
+    entry.proximity_start = 0.
+    entry.proximity_end = 0.001
+original_coordinates = [vertex.co.copy() for vertex in cloth_obj.data.vertices]
+with bpy.context.temp_override(window=_win, area=_area):
+    result = bpy.ops.efit.fit()
+_assert_equal(result, {'FINISHED'}, "STEP 11: initial fit returned FINISHED")
+prepared = state._efit_cache['prepared']
+initial_weights = prepared.proximity_weights
+suppressed = [vi for vi in first_indices if initial_weights[prepared.row_of_vertex[vi]] < 1.]
+_assert_true(bool(suppressed), "STEP 11: the first group suppresses fitting before removal")
+initial_coordinates = [vertex.co.copy() for vertex in cloth_obj.data.vertices]
+with bpy.context.temp_override(window=_win, area=_area):
+    result = bpy.ops.efit.proximity_group_remove(index=0)
+_assert_equal(result, {'FINISHED'}, "STEP 11: immediate group removal returned FINISHED")
+refreshed_weights = state._efit_cache['prepared'].proximity_weights
+_assert_true(all(refreshed_weights[prepared.row_of_vertex[vi]] == 1. for vi in first_indices),
+             "STEP 11: former group vertices receive ungrouped weight 1 on the first preview")
+_assert_true(any((cloth_obj.data.vertices[vi].co - initial_coordinates[vi]).length > 1e-7 for vi in suppressed),
+             "STEP 11: immediate removal changes the formerly suppressed coordinates")
+with bpy.context.temp_override(window=_win, area=_area):
+    result = bpy.ops.efit.preview_cancel()
+_assert_equal(result, {'FINISHED'}, "STEP 11: cancel returned FINISHED")
+_assert_true(not state._efit_cache, "STEP 11: cancel clears the session")
+_assert_true(all(tuple(vertex.co) == tuple(original) for vertex, original in
+                 zip(cloth_obj.data.vertices, original_coordinates)),
+             "STEP 11: cancel restores original coordinates exactly")
 
 # ============================================================
 # Final cleanup

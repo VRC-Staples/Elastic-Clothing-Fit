@@ -233,16 +233,23 @@ def _run_phase(blender, script, zip_path):
     Run one Blender background test phase.
     --factory-startup prevents user addons (including MCP servers) from loading,
     which avoids port conflicts with a running interactive Blender session.
-    Returns (returncode, combined_stdout_stderr).
+    Returns (returncode, combined_stdout_stderr). None means no exit was observed.
     """
-    result = subprocess.run(
-        [blender, "--background", "--factory-startup",
-         "--python", str(script), "--", "--zip", str(zip_path)],
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    return result.returncode, result.stdout + result.stderr
+    try:
+        result = subprocess.run(
+            [blender, "--background", "--factory-startup", "--python-exit-code", "1",
+             "--python", str(script), "--", "--zip", str(zip_path)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        return result.returncode, result.stdout + result.stderr
+    except subprocess.TimeoutExpired as exc:
+        partial = "".join(part.decode(errors="replace") if isinstance(part, bytes) else (part or "")
+                          for part in (exc.stdout, exc.stderr))
+        return None, partial + f"\n[ERROR] Deployment process timed out: {exc}\n"
+    except OSError as exc:
+        return None, f"[ERROR] Could not start deployment process: {exc}\n"
 
 
 def _print_summary(phase1_results, phase2_results):
@@ -277,18 +284,23 @@ def _run_tests(blender, zip_path):
     print(f"Zip     : {zip_path}")
 
     print("\n--- PHASE 1 ---")
-    _rc1, out1 = _run_phase(blender, _PHASE1_SCRIPT, zip_path)
+    rc1, out1 = _run_phase(blender, _PHASE1_SCRIPT, zip_path)
     print(out1)
     r1 = _parse_results(out1)
 
     print("\n--- PHASE 2 ---")
-    _rc2, out2 = _run_phase(blender, _PHASE2_SCRIPT, zip_path)
+    rc2, out2 = _run_phase(blender, _PHASE2_SCRIPT, zip_path)
     print(out2)
     r2 = _parse_results(out2)
 
     _print_summary(r1, r2)
 
-    return 0 if (len(r1["failed"]) + len(r2["failed"])) == 0 else 1
+    ok = True
+    for name, rc, results in [("PHASE_1", rc1, r1), ("PHASE_2", rc2, r2)]:
+        if rc != 0 or not results["passed"] or results["failed"]:
+            print(f"[ERROR] {name} did not pass: returncode={rc}, passed={len(results['passed'])}, failed={len(results['failed'])}")
+            ok = False
+    return 0 if ok else 1
 
 
 def _run_install(blender, zip_path):
@@ -301,7 +313,7 @@ def _run_install(blender, zip_path):
     # step from encountering a startup ImportError for elastic_fit.
     print("\n--- UNINSTALL ---")
     result_u = subprocess.run(
-        [blender, "--background",
+        [blender, "--background", "--python-exit-code", "1",
          "--python", str(_UNINSTALL_SCRIPT)],
         capture_output=True,
         text=True,
@@ -318,7 +330,7 @@ def _run_install(blender, zip_path):
     # normally so wm.save_userpref() persists the addon enable.
     print("\n--- INSTALL ---")
     result_i = subprocess.run(
-        [blender, "--background",
+        [blender, "--background", "--python-exit-code", "1",
          "--python", str(_INSTALL_SCRIPT), "--", "--zip", str(zip_path)],
         capture_output=True,
         text=True,

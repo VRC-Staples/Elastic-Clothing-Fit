@@ -1,17 +1,20 @@
 #!/usr/bin/env python
-"""Verify S03 updater.py invariants via static analysis.
+"""Check updater thread boundaries and production state outcomes.
 
-Checks:
-  (a) Zero bpy.* in _check_thread / _download_thread  (AST walk)
-  (b) _state_lock referenced ≥ 5 times in the source   (string count)
-  (c) Missing SHA-256 path leads to status='error'      (string match)
-  (d) _validate_dev_url function exists                 (AST walk)
-  (e) get_state returns dict(_state)                    (string match / AST)
-
-Exit 0 if all 5 pass, exit 1 if any fail.
+The missing-digest and snapshot checks run the actual updater with controlled
+transport and Blender services. Other existing static checks remain in place.
+Exit 0 if all five checks pass, or 1 if any check fails.
 """
 import ast
+import contextlib
+import importlib.util
+import io
+import json
+from pathlib import Path
 import sys
+import tempfile
+import threading
+from types import SimpleNamespace
 
 
 # ---------------------------------------------------------------------------
@@ -82,33 +85,71 @@ def check_state_lock_count(source, tree):
     return True
 
 
+@contextlib.contextmanager
+def _runtime_updater():
+    completed = threading.Event()
+    previous_bpy = sys.modules.get('bpy')
+    previous_threads = set(threading.enumerate())
+    name = 'ecf_updater_verification'
+    with tempfile.TemporaryDirectory(prefix='ecf-updater-verification-') as directory:
+        bpy = SimpleNamespace(
+            app=SimpleNamespace(background=False, version=(5, 1, 0)),
+            context=SimpleNamespace(scene=SimpleNamespace(efit_props=SimpleNamespace(
+                use_nightly_channel=False, dev_update_url=''))),
+            utils=SimpleNamespace(user_resource=lambda kind: directory))
+        sys.modules['bpy'] = bpy
+        try:
+            path = Path(__file__).resolve().parents[1] / 'elastic_fit' / 'updater.py'
+            spec = importlib.util.spec_from_file_location(name, path)
+            updater = importlib.util.module_from_spec(spec)
+            sys.modules[name] = updater
+            spec.loader.exec_module(updater)
+
+            def response(_opener, *, req, timeout, cancellation=None):
+                if req.full_url.startswith('https://api.github.com/'):
+                    body = json.dumps({'tag_name': 'v99.0.0', 'body': '', 'assets': [
+                        {'name': 'test.zip', 'browser_download_url': 'https://github.com/test/test.zip'}]}).encode()
+                else:
+                    body = b'controlled unverified bytes'
+                result = io.BytesIO(body)
+                result.headers = {'Content-Length': str(len(body))}
+                return result
+
+            def redraw():
+                if updater.get_status() in ('available', 'ready', 'error'):
+                    completed.set()
+
+            updater._urlopen_with_retry = response
+            updater._schedule_redraw = redraw
+            yield updater, completed
+        finally:
+            for thread in set(threading.enumerate()) - previous_threads:
+                thread.join(5)
+            sys.modules.pop(name, None)
+            if previous_bpy is None:
+                sys.modules.pop('bpy', None)
+            else:
+                sys.modules['bpy'] = previous_bpy
+
+
 def check_sha256_error_path(source, tree):
-    """(c) Missing SHA-256 leads to _state['status'] = 'error'.
-
-    The critical invariant is that when expected_sha256 is None/falsy the
-    download thread sets status='error' and returns without marking the zip
-    ready.  We check for the known error string used in the implementation.
-    """
-    marker = "Release has no SHA-256 hash"
-    # Also confirm 'error' appears nearby (within the same else branch text).
-    has_marker = marker in source
-    # Ensure the else branch that contains the marker also sets status to error.
-    # We do a simple scan: find the index of the marker string and look
-    # backward up to 300 chars for "_state['status'] = 'error'" or
-    # forward up to 300 chars for the same.
-    found_error_assignment = False
-    if has_marker:
-        idx = source.index(marker)
-        window = source[max(0, idx - 300): idx + 300]
-        found_error_assignment = ("'status']" in window and "'error'" in window)
-
-    if not has_marker:
-        print(f"FAIL (c) Expected marker string not found: {marker!r}")
-        return False
-    if not found_error_assignment:
-        print("FAIL (c) _state['status'] = 'error' not found near the SHA-256 absence branch")
-        return False
-    print("PASS (c) Missing SHA-256 leads to status='error'")
+    """(c) Missing SHA-256 rejects actual downloaded bytes without readiness."""
+    with _runtime_updater() as (updater, completed):
+        updater.check_for_update()
+        if not completed.wait(5) or updater.get_status() != 'available':
+            print('FAIL (c) Controlled release discovery did not complete')
+            return False
+        completed.clear()
+        updater.download_and_prepare()
+        if not completed.wait(5):
+            print('FAIL (c) Controlled download did not complete')
+            return False
+        result = updater.get_state()
+        if (result['status'] != 'error' or result['zip_path']
+                or 'Release has no SHA-256 hash' not in result['error']):
+            print(f'FAIL (c) Missing digest did not reject readiness: {result}')
+            return False
+    print("PASS (c) Actual missing-digest download rejected with status='error'")
     return True
 
 
@@ -122,35 +163,16 @@ def check_validate_dev_url_exists(source, tree):
 
 
 def check_get_state_returns_copy(source, tree):
-    """(e) get_state() returns dict(_state) — a shallow snapshot copy.
-
-    Checks both a fast string match and an AST walk to be thorough.
-    """
-    # Fast path: literal source text.
-    if 'return dict(_state)' in source:
-        print("PASS (e) get_state returns dict(_state) (string match)")
-        return True
-
-    # AST path: look for a Return whose value is a Call to 'dict' with
-    # _state as sole positional argument.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == 'get_state':
-            for child in ast.walk(node):
-                if isinstance(child, ast.Return) and child.value is not None:
-                    call = child.value
-                    if (
-                        isinstance(call, ast.Call)
-                        and isinstance(call.func, ast.Name)
-                        and call.func.id == 'dict'
-                        and len(call.args) == 1
-                        and isinstance(call.args[0], ast.Name)
-                        and call.args[0].id == '_state'
-                    ):
-                        print("PASS (e) get_state returns dict(_state) (AST match)")
-                        return True
-
-    print("FAIL (e) get_state does not return dict(_state)")
-    return False
+    """(e) A caller cannot mutate updater state through a returned snapshot."""
+    with _runtime_updater() as (updater, _):
+        snapshot = updater.get_state()
+        snapshot['status'] = 'ready'
+        snapshot['tag'] = 'caller mutation'
+        if updater.get_status() != 'idle' or updater.get_state()['tag']:
+            print('FAIL (e) Mutating a snapshot changed production updater state')
+            return False
+    print('PASS (e) Caller snapshot mutations leave production updater state unchanged')
+    return True
 
 
 # ---------------------------------------------------------------------------

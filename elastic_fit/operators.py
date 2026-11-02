@@ -9,8 +9,9 @@ import bpy
 from bpy.props import IntProperty
 from bpy.types import Operator
 
-from . import state
+from . import deps, state
 from . import updater
+from .deformation import PreparedFit
 from .state import (
     EFIT_PREFIX,
     _has_blockers,
@@ -20,8 +21,7 @@ from .properties import _resolve_vg_name
 from .preview import _efit_preview_update, _sync_preview_modifiers
 from .pipeline import (
     _efit_save_originals, _efit_create_proxy, _efit_classify_vertices,
-    _efit_shrinkwrap_proxy, _efit_transfer_displacements, _efit_apply_smoothing,
-    _efit_apply_offset_tuning, _efit_apply_preserve_follow,
+    _efit_shrinkwrap_proxy, _efit_transfer_displacements,
     _efit_create_hull_proxy,
 )
 
@@ -149,10 +149,6 @@ class EFIT_OT_fit(Operator):
         fitted_indices, preserved_indices, has_preserve, preserve_name = \
             _efit_classify_vertices(cloth, p, has_preserve, preserve_name)
 
-        # Cache the fitted set immediately — pipeline and state helpers read it
-        # back from the cache instead of rebuilding set(fitted_indices) each call.
-        state._efit_cache['fitted_set'] = set(fitted_indices)
-
         # -- Optional: build a convex-hull proxy of the body as the shrinkwrap target.
         # The hull fills concave regions (crotch, inner thigh) so the shrinkwrap
         # cannot pull clothing vertices into cavities between legs. Disabled by
@@ -177,128 +173,36 @@ class EFIT_OT_fit(Operator):
 
         # -- Transfer displacement via BVH surface interpolation --
         source_groups = p.exclusive_groups if p.fit_mode == 'EXCLUSIVE' else p.offset_groups
-        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, _proxy_bvh = \
+        cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_edges, vg_membership, _proxy_bvh = \
             _efit_transfer_displacements(
                 cloth, proxy, proxy_pre, proxy_post, body, fitted_indices, source_groups)
 
         bpy.data.objects.remove(proxy, do_unlink=True)
 
-        # -- Proximity falloff weights (between steps 5 and 6) --
-        proximity_weights = None
-        if p.use_proximity_falloff:
-            if p.use_proximity_group_tuning and len(p.proximity_groups) > 0:
-                proximity_weights = state._compute_proximity_group_weights(
-                    cloth, p.proximity_groups, cloth_body_distances, fitted_indices,
-                    vg_membership=vg_membership)
-            else:
-                proximity_weights = state._compute_proximity_weights(
-                    cloth_body_distances, fitted_indices,
-                    p.proximity_start, p.proximity_end, p.proximity_curve)
-
-        # -- Adaptive displacement smoothing --
-        _efit_apply_smoothing(
-            cloth, all_originals, cloth_displacements,
-            cloth_adj, fitted_indices, p.fit_amount, p,
-            proximity_weights=proximity_weights)
-
+        prepared = PreparedFit(
+            all_originals, cloth_displacements, fitted_indices, cloth_edges, cloth_body_normals,
+            preserved_indices=preserved_indices if has_preserve else (), original_offset=p.offset,
+            body_distances=cloth_body_distances, offset_group_weights=offset_group_weights,
+            vg_membership=vg_membership)
+        weights = state._get_proximity_weights(cloth, p, prepared)
+        coordinates = prepared.evaluate(
+            p, proximity_weights=weights, initial_fit=True,
+            batch_tree=deps.BatchKDTree if deps.PYKDTREE_AVAILABLE else None)
+        cloth.data.vertices.foreach_set('co', coordinates.ravel())
+        cloth.data.update()
         if saved_uvs:
             _restore_uvs(cloth.data, saved_uvs)
 
-        # Save each fitted vertex's position before any offset fine-tuning is applied.
-        # The preserve group follow step reads from these saved positions, so offset
-        # adjustments on fitted areas cannot unintentionally move nearby preserved vertices.
-        # Only snapshot when needed -- skips an expensive per-vertex copy for users
-        # with no preserve group and no offset groups.
-        needs_pre_pos = bool(offset_group_weights) or (has_preserve and preserved_indices)
-        if needs_pre_pos:
-            _n    = len(cloth.data.vertices)
-            _snap = np.empty(_n * 3, dtype=np.float64)
-            cloth.data.vertices.foreach_get("co", _snap)
-            _snap_3 = _snap.reshape(-1, 3)
-            _fi_arr = np.array(fitted_indices, dtype=np.int32)
-            _pos_arr = _snap_3[_fi_arr]
-            pre_offset_positions = _pos_arr  # ndarray (N_fitted, 3), row i = fitted_indices[i]
-        else:
-            pre_offset_positions = np.empty((0, 3), dtype=np.float64)
-
-        # -- Offset fine-tuning --
-        if offset_group_weights:
-            _efit_apply_offset_tuning(
-                cloth, cloth_body_normals, offset_group_weights, source_groups, p,
-                fitted_indices=fitted_indices)
-
-        # -- Move preserved vertices to follow nearby fitted areas --
-        if has_preserve and preserved_indices and fitted_indices:
-            _efit_apply_preserve_follow(
-                cloth, all_originals, fitted_indices,
-                preserved_indices, pre_offset_positions, p)
-
-        # -- Populate preview cache (slider changes will re-apply from here) --
-        # Preserve fitted_set and KDTree entries that were written earlier in this
-        # execute() call — they are valid for the full preview lifetime and must
-        # survive the dict-replace below.
-        _kd_preserve = state._efit_cache.get('kd_preserve')
-        _kd_fitted   = state._efit_cache.get('kd_fitted')
-        _kd_follow   = state._efit_cache.get('kd_follow')
-        _fitted_set  = state._efit_cache.get('fitted_set', set(fitted_indices))
-
-        # Pre-build smoothing topology: vi_to_pos, src_rows, dst_rows, and
-        # smooth_degree are pure functions of fitted_indices and cloth_adj —
-        # both static for the entire preview session.  Computed once here so
-        # _apply_disp_smoothing never rebuilds them on slider ticks.
-        # smooth_degree replaces the per-vertex Python loop that previously
-        # rebuilt a neighbour-position list on every vertex of every pass.
-        _vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
-        _sm_src, _sm_dst = [], []
-        for _i, _vi in enumerate(fitted_indices):
-            for _ni in cloth_adj[_vi]:
-                _ni_pos = _vi_to_pos.get(_ni)
-                if _ni_pos is not None and _ni_pos > _i:
-                    _sm_src.append(_i)
-                    _sm_dst.append(_ni_pos)
-        _sm_src_arr = np.array(_sm_src, dtype=np.int32)
-        _sm_dst_arr = np.array(_sm_dst, dtype=np.int32)
-        # Degree array: count of fitted neighbours per vertex (for avg divisor).
-        _degree = np.zeros(len(fitted_indices), dtype=np.float64)
-        if len(_sm_src_arr):
-            np.add.at(_degree, _sm_src_arr, 1.0)
-            np.add.at(_degree, _sm_dst_arr, 1.0)
-        # Replace 0-degree entries with 1.0 so isolated vertices divide safely.
-        _smooth_degree   = np.where(_degree > 0.0, _degree, 1.0)
-        _smooth_has_nbrs = _degree > 0.0
-
+        # The first preview must re-read group membership, as before.
+        prepared.proximity_key = None
+        # Publish only a complete session. Initial fit and preview use this same owner.
         state._efit_cache = {
-            'cloth_name':           cloth.name,
-            'all_originals':        all_originals,
-            'cloth_displacements':  cloth_displacements,
-            'cloth_adj':            cloth_adj,
-            'fitted_indices':       fitted_indices,
-            'fitted_set':           _fitted_set,
-            'preserved_indices':    preserved_indices,
-            'has_preserve':         has_preserve,
-            'preserve_name':        preserve_name,
-            'saved_uvs':            saved_uvs,
-            'cloth_body_normals':   cloth_body_normals,
-            'cloth_body_distances': cloth_body_distances,
-            'proximity_weights':    proximity_weights,
-            'original_offset':      p.offset,
-            'offset_group_weights': offset_group_weights,
-            'vg_membership':        vg_membership,
-            # Smoothing topology cache — static for the session lifetime.
-            # smooth_degree and smooth_has_nbrs enable fully-vectorised neighbour
-            # averaging, replacing the per-vertex Python loop in _apply_disp_smoothing.
-            'smooth_vi_to_pos':     _vi_to_pos,
-            'smooth_src_rows':      _sm_src_arr,
-            'smooth_dst_rows':      _sm_dst_arr,
-            'smooth_degree':        _smooth_degree,
-            'smooth_has_nbrs':      _smooth_has_nbrs,
+            'cloth_name': cloth.name,
+            'prepared': prepared,
+            'has_preserve': has_preserve,
+            'preserve_name': preserve_name,
+            'saved_uvs': saved_uvs,
         }
-        if _kd_preserve is not None:
-            state._efit_cache['kd_preserve'] = _kd_preserve
-        if _kd_fitted is not None:
-            state._efit_cache['kd_fitted'] = _kd_fitted
-        if _kd_follow is not None:
-            state._efit_cache['kd_follow'] = _kd_follow
 
         # Reselect clothing.
         bpy.ops.object.select_all(action='DESELECT')
@@ -406,7 +310,7 @@ class EFIT_OT_preview_cancel(Operator):
         if flat is not None:
             cloth.data.vertices.foreach_set("co", np.asarray(flat, dtype=np.float64))
         else:
-            all_originals = c['all_originals']
+            all_originals = c['prepared'].originals
             for vi, co in enumerate(all_originals):
                 cloth.data.vertices[vi].co = co
         cloth.data.update()

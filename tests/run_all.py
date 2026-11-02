@@ -63,17 +63,21 @@ def _parse_suite_output(stdout):
 def _run_suite(blender, script_path, blend_root, extra_args=None):
     """Run one suite script as a subprocess.
 
-    Returns (returncode, stdout_text).
+    Returns (returncode, stdout_text, timed_out). None means no exit was observed.
     """
-    cmd = [blender, "--background", "--python", str(script_path), "--"]
+    cmd = [blender, "--background", "--python-exit-code", "1", "--python", str(script_path), "--"]
     if extra_args:
         cmd.extend(extra_args)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         combined = result.stdout + result.stderr
-        return result.returncode, combined
-    except subprocess.TimeoutExpired:
-        return 1, f"[TIMEOUT] Suite '{script_path.name}' timed out after 300s\n"
+        return result.returncode, combined, False
+    except subprocess.TimeoutExpired as exc:
+        partial = "".join(part.decode(errors="replace") if isinstance(part, bytes) else (part or "")
+                          for part in (exc.stdout, exc.stderr))
+        return None, partial + f"\n[TIMEOUT] Suite '{script_path.name}' timed out after 300s\n", True
+    except OSError as exc:
+        return None, f"[ERROR] Could not start suite '{script_path.name}': {exc}\n", False
 
 
 def _run_screenshots(blender, blend_path, out_root):
@@ -169,10 +173,20 @@ def main():
     print("\n" + "=" * 60)
     print("SETUP: uninstall + install")
     print("=" * 60)
-    install_rc = deploy._run_install(blender, zip_path)
-    install_ok = install_rc == 0
+    setup = {"returncode": None, "timed_out": False, "error": None}
+    try:
+        setup["returncode"] = deploy._run_install(blender, zip_path)
+    except subprocess.TimeoutExpired as exc:
+        setup["timed_out"] = True
+        setup["error"] = str(exc)
+    except OSError as exc:
+        setup["error"] = str(exc)
+    install_ok = setup["returncode"] == 0 and not setup["timed_out"] and setup["error"] is None
+    if not install_ok and setup["error"] is None:
+        setup["error"] = f"Addon installation exited with code {setup['returncode']}"
 
     suite_results = []
+    run_ok = install_ok
 
     if not install_ok:
         # Install failed — mark all suites as not run and emit JSON.
@@ -183,7 +197,10 @@ def main():
                 "passed":   0,
                 "failed":   0,
                 "skipped":  True,
-                "failures": ["[ERROR] Suite not run: addon install failed"],
+                "failures": [],
+                "returncode": None,
+                "timed_out": False,
+                "skip_reason": "Addon installation failed",
             })
     else:
         # ------------------------------------------------------------------
@@ -216,10 +233,17 @@ def main():
             else:
                 extra = []
 
-            rc, output = _run_suite(blender, script_path, blend_root, extra_args=extra)
+            rc, output, timed_out = _run_suite(blender, script_path, blend_root, extra_args=extra)
             print(output, end="")
 
             passed, failed, skipped, failures = _parse_suite_output(output)
+            skip_reason = next((line.partition("[SKIP]")[2].strip() for line in output.splitlines()
+                                if "[SKIP]" in line), None)
+            suite_ok = (rc == 0 and not timed_out and passed > 0 and failed == 0
+                        and (not skipped or bool(skip_reason)))
+            run_ok = run_ok and suite_ok
+            if not suite_ok:
+                print(f"[ERROR] {name} did not pass: returncode={rc}, timed_out={timed_out}, checks={passed + failed}")
 
             suite_results.append({
                 "name":     name,
@@ -227,6 +251,9 @@ def main():
                 "failed":   failed,
                 "skipped":  skipped,
                 "failures": failures,
+                "returncode": rc,
+                "timed_out": timed_out,
+                "skip_reason": skip_reason,
             })
 
             if not args.programmatic and name in SCREENSHOT_BLEND:
@@ -238,9 +265,9 @@ def main():
                 else:
                     print(f"[SCREENSHOTS] {screenshot_dir}")
 
-            if name == "Fit Pipeline" and failed > 0:
+            if name == "Fit Pipeline" and not suite_ok:
                 fit_pipeline_failed = True
-                print("  [INFO] Fit Pipeline had failures — Proximity suite will be skipped.")
+                print("  [INFO] Fit Pipeline did not pass. Proximity suite will be skipped.")
 
     # ------------------------------------------------------------------
     # 5. Compute totals and emit JSON
@@ -250,6 +277,7 @@ def main():
     total_failed = sum(s["failed"] for s in suite_results)
 
     output_data = {
+        "setup":          setup,
         "suites":          suite_results,
         "total_passed":    total_passed,
         "total_failed":    total_failed,
@@ -270,13 +298,13 @@ def main():
         print(f"\nJSON written to: {out_path}")
 
     print("\n" + "=" * 60)
-    if total_failed == 0:
+    if run_ok:
         print(f"ALL SUITES PASSED  ({total_passed} checks, {duration}s)")
     else:
-        print(f"FAILED  ({total_failed} failure(s) across {len(suite_results)} suites, {duration}s)")
+        print(f"FAILED  ({total_failed} failing checks, execution did not pass, {duration}s)")
     print("=" * 60)
 
-    sys.exit(0 if total_failed == 0 else 1)
+    sys.exit(0 if run_ok else 1)
 
 
 if __name__ == "__main__":

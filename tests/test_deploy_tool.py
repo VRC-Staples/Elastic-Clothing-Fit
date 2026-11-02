@@ -1,5 +1,6 @@
 # tests/test_deploy_tool.py
 import pathlib
+import subprocess
 import sys
 import textwrap
 
@@ -105,10 +106,6 @@ class TestValidateReleaseTag:
         )
         return init_py
 
-    def test_expected_tag_from_version(self, tmp_path):
-        init_py = self._init_with_version(tmp_path, "(1, 0, 6)")
-        assert deploy._expected_release_tag(init_py) == "v1.0.6"
-
     def test_accepts_matching_semver_tag(self, tmp_path):
         init_py = self._init_with_version(tmp_path, "(1, 2, 3)")
         ok, expected, message = deploy._validate_release_tag("v1.2.3", init_py)
@@ -136,3 +133,35 @@ class TestValidateReleaseTag:
         assert ok is False
         assert expected == "v1.2.3"
         assert "malformed" in message
+
+
+@pytest.mark.parametrize('phases', [
+    [(1, '[PASS] before abnormal exit'), (0, '[PASS] next phase')],
+    [(0, '[PASS] first phase'), (2, '[PASS] before abnormal exit')],
+    [(0, ''), (0, '[PASS] next phase')],
+], ids=['first-phase-nonzero', 'second-phase-nonzero', 'empty-phase'])
+def test_deployment_rejects_incomplete_phases(monkeypatch, phases):
+    results = iter(phases)
+    monkeypatch.setattr(deploy, '_run_phase', lambda *_args: next(results))
+    assert deploy._run_tests('test-blender', pathlib.Path('test.zip')) == 1
+
+
+def test_deployment_accepts_two_completed_phases(monkeypatch):
+    monkeypatch.setattr(deploy, '_run_phase', lambda *_args: (0, '[PASS] completed check'))
+    assert deploy._run_tests('test-blender', pathlib.Path('test.zip')) == 0
+
+
+@pytest.mark.parametrize('problem', [
+    subprocess.TimeoutExpired('test-blender', 180, output=b'[PASS] partial before timeout\n'),
+    OSError('executable could not start'),
+], ids=['timeout', 'could-not-start'])
+def test_deployment_transport_failure_returns_failure_without_losing_partial_output(monkeypatch, capsys, problem):
+    def execute(*_args, **_kwargs):
+        raise problem
+
+    monkeypatch.setattr(deploy.subprocess, 'run', execute)
+    assert deploy._run_tests('test-blender', pathlib.Path('test.zip')) == 1
+    output = capsys.readouterr().out
+    assert '[ERROR]' in output
+    if isinstance(problem, subprocess.TimeoutExpired):
+        assert '[PASS] partial before timeout' in output

@@ -12,7 +12,6 @@ import bmesh
 import bpy
 
 from . import state
-from . import deps
 from .state import EFIT_PREFIX, _calc_subdivisions
 from .properties import _resolve_vg_name
 
@@ -262,22 +261,15 @@ def _efit_shrinkwrap_proxy(context, proxy, body, all_originals, fitted_indices,
     # to a preserved clothing vertex than a fitted one, so deformation does
     # not bleed into the preserved region via BVH interpolation.
     if has_preserve and preserved_indices:
-        # Read from cache if already built this fit cycle; build and cache on miss.
-        kd_preserve = state._efit_cache.get('kd_preserve')
-        if kd_preserve is None:
-            kd_preserve = KDTree(len(preserved_indices))
-            for i, vi in enumerate(preserved_indices):
-                kd_preserve.insert(all_originals[vi], i)
-            kd_preserve.balance()
-            state._efit_cache['kd_preserve'] = kd_preserve
+        kd_preserve = KDTree(len(preserved_indices))
+        for i, vi in enumerate(preserved_indices):
+            kd_preserve.insert(all_originals[vi], i)
+        kd_preserve.balance()
 
-        kd_fitted = state._efit_cache.get('kd_fitted')
-        if kd_fitted is None:
-            kd_fitted = KDTree(len(fitted_indices))
-            for i, vi in enumerate(fitted_indices):
-                kd_fitted.insert(all_originals[vi], i)
-            kd_fitted.balance()
-            state._efit_cache['kd_fitted'] = kd_fitted
+        kd_fitted = KDTree(len(fitted_indices))
+        for i, vi in enumerate(fitted_indices):
+            kd_fitted.insert(all_originals[vi], i)
+        kd_fitted.balance()
 
         for pi in range(len(proxy_pre)):
             pos = proxy_pre[pi]
@@ -301,7 +293,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     to apply offset changes without re-running shrinkwrap) and precomputes per-vertex weights
     for offset influence groups.
 
-    Returns (cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, bvh).
+    Returns (cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_edges, vg_membership, bvh).
     """
     # Use the canonical poly.vertices path at this BVH boundary rather than
     # the foreach_get helper.  This is the same pattern used in the test
@@ -391,7 +383,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
         state._bvh_cache[body_key] = bvh_body
 
     cloth_body_normals = np.zeros((N_fitted, 3), dtype=np.float64)
-    cloth_body_distances = {}
+    cloth_body_distances = np.zeros(N_fitted, dtype=np.float64)
     for pos_i, vi in enumerate(fitted_indices):
         _vi_co = mathutils.Vector((_cc_buf[vi*3], _cc_buf[vi*3+1], _cc_buf[vi*3+2]))
         loc, normal, face_idx, dist = bvh_body.find_nearest(_vi_co)
@@ -400,7 +392,7 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             cloth_body_normals[pos_i] = [n_normed.x, n_normed.y, n_normed.z]
         # else: row already zeros
         if dist is None:
-            cloth_body_distances[vi] = 0.0
+            cloth_body_distances[pos_i] = 0.0
         elif loc is not None and normal is not None:
             # Detect inside/outside via ray cast along the nearest face normal.
             # A ray fired outward from an inside vertex hits the far body wall
@@ -413,9 +405,9 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
             # displacement unconditionally -- which explodes the mesh.
             n_unit = normal.normalized()
             hit, _, _, _ = bvh_body.ray_cast(_vi_co + n_unit * 0.0001, n_unit)
-            cloth_body_distances[vi] = 0.0 if (hit is not None) else dist
+            cloth_body_distances[pos_i] = 0.0 if (hit is not None) else dist
         else:
-            cloth_body_distances[vi] = dist
+            cloth_body_distances[pos_i] = dist
 
     # Precompute per-fitted-vertex weights for offset influence groups.
     # In EVGF mode the exclusive groups carry their own influence sliders;
@@ -436,208 +428,9 @@ def _efit_transfer_displacements(cloth, proxy, proxy_pre, proxy_post, body,
     offset_group_weights = state._compute_offset_group_weights(
         cloth, source_groups, fitted_indices, vg_membership=vg_membership)
 
-    # Build a fitted-only edge adjacency dict.  Edges that cross the
-    # preserve boundary are excluded so adaptive smoothing cannot bleed
-    # displacement into the preserved region.
-    # Uses foreach_get for a bulk read then numpy masking to filter edges
-    # before the Python adjacency loop, which is much faster on large meshes.
-    n_verts    = len(cloth.data.vertices)
-    cloth_adj  = {vi: [] for vi in fitted_indices}
-    n_edges    = len(cloth.data.edges)
-    edge_buf   = np.empty(n_edges * 2, dtype=np.int32)
+    n_edges = len(cloth.data.edges)
+    edge_buf = np.empty(n_edges * 2, dtype=np.int32)
     cloth.data.edges.foreach_get("vertices", edge_buf)
-    edges = edge_buf.reshape(-1, 2)
-    fitted_mask = np.zeros(n_verts, dtype=bool)
-    fitted_mask[np.array(fitted_indices, dtype=np.int32)] = True
-    both_fitted = fitted_mask[edges[:, 0]] & fitted_mask[edges[:, 1]]
-    for a, b in edges[both_fitted]:
-        a, b = int(a), int(b)
-        cloth_adj[a].append(b)
-        cloth_adj[b].append(a)
+    cloth_edges = edge_buf.reshape(-1, 2)
 
-    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_adj, vg_membership, bvh
-
-
-def _efit_apply_smoothing(cloth, all_originals, cloth_displacements, cloth_adj,
-                          fitted_indices, fit, p, proximity_weights=None):
-    """Apply adaptive displacement smoothing and write final vertex positions.
-
-    Smooths aggressively where the displacement field has sharp jumps (e.g. the
-    centerline crease between pant legs) and leaves smooth regions nearly untouched.
-    Each pass computes a per-vertex gradient (max displacement diff to edge neighbors);
-    vertices above the median-scaled threshold blend hard toward their neighbor average
-    while those below blend lightly.
-    """
-    smoothed_arr = state._smooth_displacements(
-        cloth_displacements, fitted_indices, cloth_adj, p, return_array=True)
-
-    # Write all fitted vertices in a single foreach_set call instead of
-    # N individual Python-to-C bridge crossings.
-    # Read the whole mesh first so non-fitted vertices are preserved as-is.
-    n_verts = len(cloth.data.vertices)
-    co_buf  = np.empty(n_verts * 3, dtype=np.float64)
-    cloth.data.vertices.foreach_get("co", co_buf)
-
-    fi_arr = np.array(fitted_indices, dtype=np.int32)
-
-    # Vectorised position computation: all_originals[fi_arr] is (N_fitted, 3);
-    # smoothed_arr rows align by position with fitted_indices.
-    if proximity_weights is not None:
-        pw_arr = np.fromiter(
-            (proximity_weights[vi] for vi in fitted_indices),
-            dtype=np.float64, count=len(fitted_indices))
-        fitted_pos = all_originals[fi_arr] + smoothed_arr * (fit * pw_arr[:, None])
-    else:
-        fitted_pos = all_originals[fi_arr] + smoothed_arr * fit
-
-    # Scatter fitted positions into co_buf using COO-style index assignment.
-    base_arr = fi_arr * 3
-    co_buf[base_arr]     = fitted_pos[:, 0]
-    co_buf[base_arr + 1] = fitted_pos[:, 1]
-    co_buf[base_arr + 2] = fitted_pos[:, 2]
-
-    cloth.data.vertices.foreach_set("co", co_buf)
-
-    cloth.data.update()
-
-
-def _efit_apply_offset_tuning(cloth, cloth_body_normals, offset_group_weights,
-                              source_groups, p, fitted_indices=None):
-    """Apply per-group offset influence multipliers along cached body-surface normals.
-
-    A group influence of 100% is neutral (no change); 0% pulls the vertices flush to
-    the body surface; 200% doubles the gap.
-    """
-    base_offset = p.offset
-    n_verts = len(cloth.data.vertices)
-    co_buf  = np.empty(n_verts * 3, dtype=np.float64)
-    cloth.data.vertices.foreach_get("co", co_buf)
-    changed = False
-    # Build vi→positional-index map for ndarray access.
-    vi_to_pos = {}
-    if fitted_indices is not None:
-        vi_to_pos = {vi: i for i, vi in enumerate(fitted_indices)}
-    for og in source_groups:
-        og_name = _resolve_vg_name(og.group_name)
-        if not og_name:
-            continue
-        og_weights = offset_group_weights.get(og_name)
-        if not og_weights:
-            continue
-        # 0% => -1 (no offset), 100% => 0 (neutral), 200% => +1 (double)
-        mult_delta = og.influence / 100.0 - 1.0
-        if abs(mult_delta) < 0.0001:
-            continue
-        # Collect arrays for vectorized scatter — filter to vertices
-        # that have a positional mapping in vi_to_pos.
-        vis_raw = np.array(list(og_weights.keys()), dtype=np.int32)
-        ws_raw  = np.array(list(og_weights.values()), dtype=np.float64)
-        mask    = np.array([v in vi_to_pos for v in vis_raw], dtype=bool)
-        if not np.any(mask):
-            continue
-        vis   = vis_raw[mask]
-        ws    = ws_raw[mask]
-        poses = np.array([vi_to_pos[v] for v in vis], dtype=np.int32)
-        # deltas shape: (M, 3) — normal * scalar delta per vertex
-        deltas = cloth_body_normals[poses] * (base_offset * mult_delta * ws[:, None])
-        bases  = vis * 3
-        np.add.at(co_buf, bases,     deltas[:, 0])
-        np.add.at(co_buf, bases + 1, deltas[:, 1])
-        np.add.at(co_buf, bases + 2, deltas[:, 2])
-        changed = True
-    if changed:
-        cloth.data.vertices.foreach_set("co", co_buf)
-    cloth.data.update()
-
-
-def _efit_apply_preserve_follow(cloth, all_originals, fitted_indices, preserved_indices,
-                                pre_offset_positions, p):
-    """Move preserved vertices to gently follow nearby fitted areas.
-
-    Builds a KDTree of fitted vertices in rest-pose space (stable across deformation),
-    then for each preserved vertex computes an inverse-distance-weighted average of
-    the K nearest fitted vertices' displacements and applies it scaled by follow_strength.
-    """
-    strength = p.follow_strength
-    if strength <= 0.0:
-        return
-
-    K_follow = min(p.follow_neighbors, len(fitted_indices))
-
-    n_verts = len(cloth.data.vertices)
-    co_buf  = np.empty(n_verts * 3, dtype=np.float64)
-    cloth.data.vertices.foreach_get("co", co_buf)
-
-    # Pre-compute per-fitted-vertex displacement once (vectorized).
-    # fitted_disp[i] = pre_offset_positions[i] - all_originals[fitted_indices[i]]
-    fi_arr = np.array(fitted_indices, dtype=np.int32)
-    fitted_disp = pre_offset_positions - all_originals[fi_arr]
-
-    if deps.PYKDTREE_AVAILABLE:
-        # --- Fast path: pykdtree batch query ---
-        # Build/reuse a pykdtree from rest-pose fitted positions (float32).
-        kd_follow = state._efit_cache.get('kd_follow')
-        # Guard against stale mathutils KDTree from older sessions.
-        if kd_follow is None or not isinstance(kd_follow, deps.BatchKDTree):
-            fitted_rest = all_originals[fi_arr].astype(np.float32)
-            kd_follow = deps.BatchKDTree(fitted_rest)
-            state._efit_cache['kd_follow'] = kd_follow
-
-        pres_arr = all_originals[np.array(preserved_indices, dtype=np.int32)].astype(np.float32)
-        dists, idxs = kd_follow.query(pres_arr, k=K_follow)           # (N_pres, K)
-        inv_d = 1.0 / np.maximum(dists, np.float32(1e-4))             # (N_pres, K)
-        w_sum = inv_d.sum(axis=1, keepdims=True)                      # (N_pres, 1)
-        k_disp = fitted_disp.astype(np.float32)[idxs]                 # (N_pres, K, 3)
-        weighted = (k_disp * inv_d[:, :, None]).sum(axis=1) / w_sum   # (N_pres, 3)
-
-        pres_indices_arr = np.array(preserved_indices, dtype=np.int64)
-        base_cols = pres_indices_arr * 3
-        magnitudes = np.abs(weighted).sum(axis=1)
-        mask = magnitudes >= 1e-7
-        if mask.any():
-            rest_coords = pres_arr[mask]
-            disp_scaled = weighted[mask] * np.float32(strength)
-            new_coords  = rest_coords + disp_scaled
-            cols = base_cols[mask]
-            co_buf[cols]     = new_coords[:, 0]
-            co_buf[cols + 1] = new_coords[:, 1]
-            co_buf[cols + 2] = new_coords[:, 2]
-
-    else:
-        # --- Fallback path: sequential mathutils.KDTree ---
-        kd_follow = state._efit_cache.get('kd_follow')
-        if kd_follow is None or not isinstance(kd_follow, KDTree):
-            kd_follow = KDTree(len(fitted_indices))
-            for i, vi in enumerate(fitted_indices):
-                kd_follow.insert(all_originals[vi], i)
-            kd_follow.balance()
-            state._efit_cache['kd_follow'] = kd_follow
-
-        for vi in preserved_indices:
-            rest = all_originals[vi]
-            neighbors = kd_follow.find_n(mathutils.Vector(rest), K_follow)
-
-            tx = ty = tz = 0.0
-            total_weight  = 0.0
-
-            for _co, idx, dist in neighbors:
-                d = fitted_disp[idx]
-                w  = 1.0 / max(dist, 0.0001)
-                tx += d[0] * w
-                ty += d[1] * w
-                tz += d[2] * w
-                total_weight += w
-
-            if total_weight > 0.0:
-                inv_w = 1.0 / total_weight
-                dx = tx * inv_w
-                dy = ty * inv_w
-                dz = tz * inv_w
-                if abs(dx) + abs(dy) + abs(dz) >= 1e-7:
-                    base = vi * 3
-                    co_buf[base]     = rest[0] + dx * strength
-                    co_buf[base + 1] = rest[1] + dy * strength
-                    co_buf[base + 2] = rest[2] + dz * strength
-
-    cloth.data.vertices.foreach_set("co", co_buf)
-    cloth.data.update()
+    return cloth_displacements, cloth_body_normals, cloth_body_distances, offset_group_weights, cloth_edges, vg_membership, bvh
