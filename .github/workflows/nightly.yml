@@ -43,7 +43,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dev tools
-        run: pip install ruff pytest
+        run: |
+          pip install ruff pytest
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r .github/requirements-ci-numpy.txt
 
       - name: Lint — ruff
         run: ruff check elastic_fit/ tests/ tools/

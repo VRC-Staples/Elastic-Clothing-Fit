@@ -1,0 +1,3 @@
+# Host tests on Linux x86_64 with CPython 3.11. Blender uses its bundled NumPy.
+numpy==2.4.3 \
+    --hash=sha256:715de7f82e192e8cae5a507a347d97ad17598f8e026152ca97233e3666daaa71
